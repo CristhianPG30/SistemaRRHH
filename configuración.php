@@ -1,673 +1,305 @@
-<?php 
+<?php
 session_start();
-if (!isset($_SESSION['username'])) {
+include 'db.php'; // Conexión a la base de datos
+
+// Verificar si el usuario está autenticado y tiene el rol de administrador
+if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
     header('Location: login.php');
     exit;
 }
-$username = $_SESSION['username'];
 
-// Ruta al archivo de configuración
+$message = '';
+$message_type = '';
 $configFilePath = 'js/configuracion.json';
 
-// Incluir la conexión a la base de datos
-include 'db.php';
-
-// Leer la configuración desde el archivo JSON
-$configData = json_decode(file_get_contents($configFilePath), true);
-
-// Generar token CSRF
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
-
-// Inicializar variables de mensaje
-if (!isset($_SESSION['message'])) {
-    $_SESSION['message'] = '';
-    $_SESSION['message_type'] = '';
-}
-
-// Manejar el formulario de actualización
+// --- LÓGICA DE GESTIÓN (POST REQUESTS) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Verificar el token CSRF
-    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
-        $_SESSION['message'] = 'Token CSRF inválido.';
-        $_SESSION['message_type'] = 'danger';
-        header("Location: configuración.php"); // Asegúrate de que el nombre del archivo sea correcto
-        exit;
-    }
-
-    // Actualizar configuración del sistema
+    // Manejo de Configuración General
     if (isset($_POST['update_config'])) {
-        $configData['nombre_empresa'] = $_POST['nombre_empresa'];
-        $configData['tarifa_hora_extra'] = (float)$_POST['tarifa_hora_extra'];
-
-        // Guardar la configuración actualizada en el archivo JSON
+        $configData = ['nombre_empresa' => $_POST['nombre_empresa'], 'tarifa_hora_extra' => floatval($_POST['tarifa_hora_extra'])];
         if (file_put_contents($configFilePath, json_encode($configData, JSON_PRETTY_PRINT))) {
-            $_SESSION['message'] = 'Configuración actualizada con éxito.';
-            $_SESSION['message_type'] = 'success';
+            $message = 'Configuración del sistema actualizada con éxito.';
+            $message_type = 'success';
         } else {
-            $_SESSION['message'] = 'Error al actualizar la configuración.';
-            $_SESSION['message_type'] = 'danger';
+            $message = 'Error al guardar la configuración.';
+            $message_type = 'danger';
         }
-        header("Location: configuración.php");
-        exit;
     }
-
-    // Agregar nueva deducción
-    elseif (isset($_POST['add_deduction'])) {
-        $descripcion = $_POST['descripcion'];
-        $porcentaje = isset($_POST['porcentaje']) && $_POST['porcentaje'] !== '' ? floatval($_POST['porcentaje']) : null;
-        $aplica_general = isset($_POST['aplica_general']) ? 1 : 0;
-
-        // Insertar en la base de datos
-        $stmt = $conn->prepare("INSERT INTO deducciones (Persona_idPersona, descripcion, Porcentaje, tipo_deduccion, aplica_general) VALUES (NULL, ?, ?, 'porcentaje', ?)");
-        $stmt->bind_param("sdi", $descripcion, $porcentaje, $aplica_general);
-        if ($stmt->execute()) {
-            $_SESSION['message'] = 'Deducción agregada con éxito.';
-            $_SESSION['message_type'] = 'success';
-            header("Location: configuración.php");
-            exit;
+    // Manejo de Deducciones
+    if (isset($_POST['save_deduction'])) {
+        $id = intval($_POST['idTipoDeduccion']);
+        $nombre_deduccion = trim($_POST['nombre_deduccion']);
+        $porcentaje = floatval($_POST['porcentaje']);
+        if (empty($nombre_deduccion) || $porcentaje < 0) {
+            $message = 'El nombre y un porcentaje válido son requeridos.';
+            $message_type = 'danger';
         } else {
-            $_SESSION['message'] = 'Error al agregar la deducción: ' . $stmt->error;
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        }
-        $stmt->close();
-    }
-
-    // Editar deducción existente
-    elseif (isset($_POST['edit_deduction'])) {
-        $idDeduccion = intval($_POST['idDeduccion']);
-        $descripcion = $_POST['descripcion'];
-        $porcentaje = isset($_POST['porcentaje']) && $_POST['porcentaje'] !== '' ? floatval($_POST['porcentaje']) : null;
-        $aplica_general = isset($_POST['aplica_general']) ? 1 : 0;
-
-        // Actualizar en la base de datos
-        $stmt = $conn->prepare("UPDATE deducciones SET descripcion = ?, Porcentaje = ?, aplica_general = ? WHERE idDeduccion = ?");
-        $stmt->bind_param("sdii", $descripcion, $porcentaje, $aplica_general, $idDeduccion);
-        if ($stmt->execute()) {
-            $_SESSION['message'] = 'Deducción actualizada con éxito.';
-            $_SESSION['message_type'] = 'success';
-            header("Location: configuración.php");
-            exit;
-        } else {
-            $_SESSION['message'] = 'Error al actualizar la deducción: ' . $stmt->error;
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        }
-        $stmt->close();
-    }
-
-    // Eliminar deducción
-    elseif (isset($_POST['delete_deduction'])) {
-        $idDeduccion = intval($_POST['idDeduccion']);
-
-        // Eliminar de la base de datos
-        $stmt = $conn->prepare("DELETE FROM deducciones WHERE idDeduccion = ?");
-        $stmt->bind_param("i", $idDeduccion);
-        if ($stmt->execute()) {
-            $_SESSION['message'] = 'Deducción eliminada con éxito.';
-            $_SESSION['message_type'] = 'success';
-            header("Location: configuración.php");
-            exit;
-        } else {
-            $_SESSION['message'] = 'Error al eliminar la deducción: ' . $stmt->error;
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        }
-        $stmt->close();
-    }
-
-    // Agregar nueva jerarquía con validaciones adicionales
-    elseif (isset($_POST['add_jerarquia'])) {
-        $colaborador_id = intval($_POST['colaborador_id']);
-        $jefe_id = isset($_POST['jefe_id']) && $_POST['jefe_id'] !== '' ? intval($_POST['jefe_id']) : null;
-        $departamento_id = intval($_POST['departamento_id']);
-
-        // Validar que el colaborador no sea su propio jefe
-        if ($colaborador_id === $jefe_id) {
-            $_SESSION['message'] = 'Un colaborador no puede ser su propio jefe.';
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        } else {
-            // Verificar si la jerarquía ya existe para este colaborador en cualquier departamento
-            if ($jefe_id === null) {
-                $stmt = $conn->prepare("SELECT idJerarquia FROM jerarquia WHERE Colaborador_idColaborador = ? AND Departamento_idDepartamento = ?");
-                $stmt->bind_param("ii", $colaborador_id, $departamento_id);
+            $descripcion_db = $nombre_deduccion . ':' . $porcentaje;
+            if ($id > 0) {
+                $stmt = $conn->prepare("UPDATE tipo_deduccion_cat SET Descripcion = ? WHERE idTipoDeduccion = ?");
+                $stmt->bind_param("si", $descripcion_db, $id);
             } else {
-                $stmt = $conn->prepare("SELECT idJerarquia FROM jerarquia WHERE Colaborador_idColaborador = ? AND (Departamento_idDepartamento = ? OR Jefe_idColaborador = ?)");
-                $stmt->bind_param("iii", $colaborador_id, $departamento_id, $jefe_id);
+                $stmt = $conn->prepare("INSERT INTO tipo_deduccion_cat (Descripcion) VALUES (?)");
+                $stmt->bind_param("s", $descripcion_db);
             }
-            $stmt->execute();
-            $stmt->store_result();
-
-            if ($stmt->num_rows > 0) {
-                $_SESSION['message'] = 'La jerarquía ya existe o el colaborador ya está asignado con el mismo jefe en otro departamento.';
-                $_SESSION['message_type'] = 'danger';
-                header("Location: configuración.php");
-                exit;
-            } else {
-                // Insertar en la base de datos
-                if ($jefe_id === null) {
-                    $stmt = $conn->prepare("INSERT INTO jerarquia (Colaborador_idColaborador, Departamento_idDepartamento) VALUES (?, ?)");
-                    $stmt->bind_param("ii", $colaborador_id, $departamento_id);
-                } else {
-                    $stmt = $conn->prepare("INSERT INTO jerarquia (Colaborador_idColaborador, Jefe_idColaborador, Departamento_idDepartamento) VALUES (?, ?, ?)");
-                    $stmt->bind_param("iii", $colaborador_id, $jefe_id, $departamento_id);
-                }
-
-                if ($stmt->execute()) {
-                    $_SESSION['message'] = 'Jerarquía agregada con éxito.';
-                    $_SESSION['message_type'] = 'success';
-                    header("Location: configuración.php");
-                    exit;
-                } else {
-                    $_SESSION['message'] = 'Error al agregar la jerarquía: ' . $stmt->error;
-                    $_SESSION['message_type'] = 'danger';
-                    header("Location: configuración.php");
-                    exit;
-                }
-            }
+            if ($stmt->execute()) { $message = 'La deducción ha sido guardada con éxito.'; $message_type = 'success'; }
+            else { $message = 'Error al guardar la deducción.'; $message_type = 'danger'; }
             $stmt->close();
         }
     }
-
-    // Editar jerarquía existente
-    elseif (isset($_POST['edit_jerarquia'])) {
-        $idJerarquia = intval($_POST['idJerarquia']);
+    if (isset($_POST['delete_deduction_id'])) {
+        $id = intval($_POST['delete_deduction_id']);
+        $stmt = $conn->prepare("DELETE FROM tipo_deduccion_cat WHERE idTipoDeduccion = ?");
+        $stmt->bind_param("i", $id);
+        if ($stmt->execute()) { $message = 'Deducción eliminada con éxito.'; $message_type = 'success'; }
+        else { $message = 'Error al eliminar la deducción.'; $message_type = 'danger'; }
+        $stmt->close();
+    }
+    // Manejo de Jerarquías
+    if (isset($_POST['save_jerarquia'])) {
+        $id = intval($_POST['idJerarquia']);
         $colaborador_id = intval($_POST['colaborador_id']);
-        $jefe_id = isset($_POST['jefe_id']) && $_POST['jefe_id'] !== '' ? intval($_POST['jefe_id']) : null;
+        $jefe_id = empty($_POST['jefe_id']) ? null : intval($_POST['jefe_id']);
         $departamento_id = intval($_POST['departamento_id']);
-
-        // Validar que el colaborador no sea su propio jefe
         if ($colaborador_id === $jefe_id) {
-            $_SESSION['message'] = 'Un colaborador no puede ser su propio jefe.';
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        }
-
-        // Actualizar en la base de datos
-        if ($jefe_id === null) {
-            $stmt = $conn->prepare("UPDATE jerarquia SET Colaborador_idColaborador = ?, Jefe_idColaborador = NULL, Departamento_idDepartamento = ? WHERE idJerarquia = ?");
-            $stmt->bind_param("iii", $colaborador_id, $departamento_id, $idJerarquia);
+            $message = 'Un colaborador no puede ser su propio jefe.';
+            $message_type = 'danger';
         } else {
-            $stmt = $conn->prepare("UPDATE jerarquia SET Colaborador_idColaborador = ?, Jefe_idColaborador = ?, Departamento_idDepartamento = ? WHERE idJerarquia = ?");
-            $stmt->bind_param("iiii", $colaborador_id, $jefe_id, $departamento_id, $idJerarquia);
+            if ($id > 0) {
+                $stmt = $conn->prepare("UPDATE jerarquia SET Colaborador_idColaborador = ?, Jefe_idColaborador = ?, Departamento_idDepartamento = ? WHERE idJerarquia = ?");
+                $stmt->bind_param("iiii", $colaborador_id, $jefe_id, $departamento_id, $id);
+            } else {
+                $stmt = $conn->prepare("INSERT INTO jerarquia (Colaborador_idColaborador, Jefe_idColaborador, Departamento_idDepartamento) VALUES (?, ?, ?)");
+                $stmt->bind_param("iii", $colaborador_id, $jefe_id, $departamento_id);
+            }
+            if ($stmt->execute()) { $message = 'Jerarquía guardada con éxito.'; $message_type = 'success'; }
+            else { $message = 'Error al guardar la jerarquía. Es posible que el colaborador ya esté asignado.'; $message_type = 'danger'; }
+            $stmt->close();
         }
-
-        if ($stmt->execute()) {
-            $_SESSION['message'] = 'Jerarquía actualizada con éxito.';
-            $_SESSION['message_type'] = 'success';
-            header("Location: configuración.php");
-            exit;
-        } else {
-            $_SESSION['message'] = 'Error al actualizar la jerarquía: ' . $stmt->error;
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        }
-        $stmt->close();
     }
-
-    // Eliminar jerarquía
-    elseif (isset($_POST['delete_jerarquia'])) {
-        $idJerarquia = intval($_POST['idJerarquia']);
-
-        // Eliminar de la base de datos
+    if (isset($_POST['delete_jerarquia_id'])) {
+        $id = intval($_POST['delete_jerarquia_id']);
         $stmt = $conn->prepare("DELETE FROM jerarquia WHERE idJerarquia = ?");
-        $stmt->bind_param("i", $idJerarquia);
-        if ($stmt->execute()) {
-            $_SESSION['message'] = 'Jerarquía eliminada con éxito.';
-            $_SESSION['message_type'] = 'success';
-            header("Location: configuración.php");
-            exit;
-        } else {
-            $_SESSION['message'] = 'Error al eliminar la jerarquía: ' . $stmt->error;
-            $_SESSION['message_type'] = 'danger';
-            header("Location: configuración.php");
-            exit;
-        }
+        $stmt->bind_param("i", $id);
+        if ($stmt->execute()) { $message = 'Jerarquía eliminada con éxito.'; $message_type = 'success'; }
+        else { $message = 'Error al eliminar la jerarquía.'; $message_type = 'danger'; }
         $stmt->close();
     }
 }
 
-// Obtener las deducciones actuales
-$sql = "SELECT * FROM deducciones WHERE Persona_idPersona IS NULL";
-$result = $conn->query($sql);
-$deducciones = [];
-if ($result->num_rows > 0) {
-    while($row = $result->fetch_assoc()) {
-        $deducciones[] = $row;
-    }
-}
-
-// Obtener las jerarquías actuales
-$sql = "SELECT j.idJerarquia, p.Nombre AS ColaboradorNombre, p.Apellido1 AS ColaboradorApellido, 
-               jefe_p.Nombre AS JefeNombre, jefe_p.Apellido1 AS JefeApellido, d.nombre AS DepartamentoNombre
-        FROM jerarquia j
-        JOIN colaborador c ON j.Colaborador_idColaborador = c.idColaborador
-        JOIN persona p ON c.Persona_idPersona = p.idPersona
-        LEFT JOIN colaborador jefe ON j.Jefe_idColaborador = jefe.idColaborador
-        LEFT JOIN persona jefe_p ON jefe.Persona_idPersona = jefe_p.idPersona
-        JOIN departamento d ON j.Departamento_idDepartamento = d.idDepartamento";
-
-$result = $conn->query($sql);
-$jerarquias = [];
-if ($result->num_rows > 0) {
-    while($row = $result->fetch_assoc()) {
-        $jerarquias[] = $row;
-    }
-}
-
-// Obtener lista de colaboradores para los formularios
-$sql = "SELECT c.idColaborador, p.Nombre AS nombre, p.Apellido1 AS apellido1 
-        FROM colaborador c
-        JOIN persona p ON c.Persona_idPersona = p.idPersona";
-
-$result = $conn->query($sql);
-$colaboradores = [];
-if ($result->num_rows > 0) {
-    while($row = $result->fetch_assoc()) {
-        $colaboradores[] = $row;
-    }
-}
-
-// Obtener lista de jefes (todos los colaboradores que pueden ser jefes)
-$jefes = $colaboradores;
-
-// Obtener lista de departamentos
-$sql = "SELECT idDepartamento, nombre FROM departamento WHERE estado = 'activo'";
-$result = $conn->query($sql);
-$departamentos = [];
-if ($result->num_rows > 0) {
-    while($row = $result->fetch_assoc()) {
-        $departamentos[] = $row;
-    }
-}
+// --- OBTENCIÓN DE DATOS PARA LA VISTA ---
+$configData = json_decode(file_get_contents($configFilePath), true);
+$deducciones_raw = $conn->query("SELECT * FROM tipo_deduccion_cat ORDER BY Descripcion");
+$jerarquias = $conn->query("SELECT j.idJerarquia, j.Colaborador_idColaborador, j.Jefe_idColaborador, j.Departamento_idDepartamento, CONCAT(p.Nombre, ' ', p.Apellido1) AS colaborador_nombre, CONCAT(jefe_p.Nombre, ' ', jefe_p.Apellido1) AS jefe_nombre, d.nombre AS departamento_nombre FROM jerarquia j JOIN colaborador c ON j.Colaborador_idColaborador = c.idColaborador JOIN persona p ON c.id_persona_fk = p.idPersona LEFT JOIN colaborador jefe_c ON j.Jefe_idColaborador = jefe_c.idColaborador LEFT JOIN persona jefe_p ON jefe_c.id_persona_fk = jefe_p.idPersona JOIN departamento d ON j.Departamento_idDepartamento = d.idDepartamento ORDER BY d.nombre, jefe_nombre, p.Nombre");
+$colaboradores = $conn->query("SELECT c.idColaborador, CONCAT(p.Nombre, ' ', p.Apellido1) AS nombre_completo FROM colaborador c JOIN persona p ON c.id_persona_fk = p.idPersona WHERE c.activo = 1 ORDER BY p.Nombre");
+$departamentos = $conn->query("SELECT d.* FROM departamento d JOIN estado_cat e ON d.id_estado_fk = e.idEstado WHERE e.Descripcion = 'activo' ORDER BY d.nombre");
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Configuración del Sistema</title>
-    <!-- Bootstrap CSS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Configuración del Sistema - Edginton S.A.</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Estilos personalizados para una paleta de colores más armoniosa */
-        .card-header-primary {
-            background-color: #6c757d; /* Gris medio */
-            color: #fff;
+        body { font-family: 'Poppins', sans-serif; background-color: #f4f7fc; }
+        .card { 
+            border: none;
+            border-radius: 1rem; 
+            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.05);
+            transition: all 0.3s ease-in-out;
+            height: 100%;
         }
-        .card-header-success {
-            background-color: #28a745; /* Verde */
-            color: #fff;
+        .card:hover { transform: translateY(-5px); }
+        .card-header {
+            background-color: #ffffff;
+            border-bottom: 1px solid #e9ecef;
+            padding: 1.25rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .card-header-info {
-            background-color: #6610f2; /* Morado */
-            color: #fff;
+        .card-header h5 {
+            font-weight: 600;
+            color: #343a40;
+            margin: 0;
+            display: flex;
+            align-items: center;
         }
-        /* Estilo para las alertas */
-        .alert-position {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            z-index: 1050;
-            min-width: 300px;
+        .card-header h5 i {
+            color: #4e73df;
+            font-size: 1.5rem;
         }
-        /* Estilos adicionales para mejorar la apariencia */
-        .card {
-            margin-bottom: 30px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+        .list-group-item .badge { font-size: 0.9em; }
+
+        /* Estilos mejorados para la tarjeta de Jerarquías */
+        .jerarquia-item {
+            padding: 1rem;
+            border-bottom: 1px solid #e9ecef;
         }
-        /* Personalización de botones */
-        .btn-primary {
-            background-color: #6c757d; /* Gris medio */
-            border-color: #6c757d;
+        .jerarquia-item:last-child {
+            border-bottom: none;
         }
-        .btn-primary:hover {
-            background-color: #5a6268;
-            border-color: #545b62;
+        .colaborador-info {
+            font-weight: 600;
+            color: #212529;
         }
-        .btn-secondary {
-            background-color: #adb5bd; /* Gris claro */
-            border-color: #adb5bd;
+        .departamento-info {
+            font-size: 0.85rem;
+            color: #6c757d;
         }
-        .btn-secondary:hover {
-            background-color: #858d96;
-            border-color: #6c757d;
+        .jefe-info {
+            display: flex;
+            align-items: center;
+            font-size: 0.9rem;
+            color: #495057;
         }
-        /* Mejora de badges */
-        .badge-success {
-            background-color: #28a745;
-        }
-        .badge-secondary {
-            background-color: #6c757d;
+        .jefe-info i {
+            margin-right: 0.5rem;
+            color: #6c757d;
         }
     </style>
 </head>
 <body>
+    <?php include 'header.php'; ?>
 
-<?php include 'header.php'; ?>
+    <div class="container mt-5 mb-5">
+        <h2 class="text-center mb-5" style="font-weight: 600;">Configuración y Mantenimientos</h2>
 
-<div class="container mt-5">
-    <h1 class="mb-4 text-center">Configuración del Sistema</h1>
+        <?php if ($message): ?>
+            <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($message); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
 
-    <!-- Sección de Mensajes -->
-    <?php if (!empty($_SESSION['message'])): ?>
-        <div class="alert alert-<?= $_SESSION['message_type'] ?> alert-dismissible fade show alert-position" role="alert">
-            <?= htmlspecialchars($_SESSION['message']) ?>
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
-        </div>
-        <?php 
-            // Limpiar el mensaje después de mostrarlo
-            $_SESSION['message'] = '';
-            $_SESSION['message_type'] = '';
-        ?>
-    <?php endif; ?>
-
-    <div class="row">
-        <!-- Configuración del Sistema -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header card-header-primary">
-                    <h5 class="mb-0"><i class="bi bi-gear-wide-connected me-2"></i>Configuración del Sistema</h5>
+        <div class="row g-4">
+            <!-- Columna de Configuración General y Deducciones -->
+            <div class="col-lg-5">
+                <div class="card mb-4">
+                    <div class="card-header"><h5 class="mb-0"><i class="bi bi-gear-fill me-2"></i>General</h5></div>
+                    <div class="card-body p-4">
+                        <form method="POST">
+                            <input type="hidden" name="update_config" value="1">
+                            <div class="mb-3"><label for="nombre_empresa" class="form-label fw-bold">Nombre de Empresa</label><input type="text" class="form-control" id="nombre_empresa" name="nombre_empresa" value="<?php echo htmlspecialchars($configData['nombre_empresa']); ?>" required></div>
+                            <div class="mb-3"><label for="tarifa_hora_extra" class="form-label fw-bold">Tarifa por Hora Extra (₡)</label><input type="number" step="0.01" class="form-control" id="tarifa_hora_extra" name="tarifa_hora_extra" value="<?php echo htmlspecialchars($configData['tarifa_hora_extra']); ?>" required></div>
+                            <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save me-1"></i>Guardar</button>
+                        </form>
+                    </div>
                 </div>
-                <div class="card-body">
-                    <form method="POST">
-                        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-                        <input type="hidden" name="update_config" value="1">
-                        <div class="mb-3">
-                            <label for="nombre_empresa" class="form-label">Nombre de la Empresa</label>
-                            <input type="text" class="form-control" id="nombre_empresa" name="nombre_empresa" value="<?= htmlspecialchars($configData['nombre_empresa']); ?>" required>
-                        </div>
-                     
-                        <div class="mb-3">
-                            <label for="tarifa_hora_extra" class="form-label">Tarifa por Hora Extra (₡)</label>
-                            <input type="number" step="0.01" class="form-control" id="tarifa_hora_extra" name="tarifa_hora_extra" value="<?= htmlspecialchars($configData['tarifa_hora_extra']); ?>" required>
-                        </div>
-                        <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i>Guardar Configuración</button>
-                    </form>
+
+                <div class="card">
+                    <div class="card-header"><h5 class="mb-0"><i class="bi bi-journal-minus me-2"></i>Deducciones</h5><button class="btn btn-sm btn-outline-primary" onclick="openDeductionModal()"><i class="bi bi-plus"></i></button></div>
+                    <div class="card-body p-2">
+                        <ul class="list-group list-group-flush">
+                            <?php if ($deducciones_raw && $deducciones_raw->num_rows > 0): ?>
+                                <?php while ($deduccion = $deducciones_raw->fetch_assoc()): 
+                                    $parts = explode(':', $deduccion['Descripcion']);
+                                    $nombre_ded = htmlspecialchars($parts[0]);
+                                    $porcentaje_ded = isset($parts[1]) ? htmlspecialchars($parts[1]) : '0.00';
+                                ?>
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <?php echo $nombre_ded; ?> <span class="badge bg-light text-dark border"><?php echo $porcentaje_ded; ?>%</span>
+                                        <div>
+                                            <button class="btn btn-sm btn-light" onclick='openDeductionModal(<?php echo json_encode($deduccion); ?>)'><i class="bi bi-pencil-fill text-primary"></i></button>
+                                            <button class="btn btn-sm btn-light" onclick="confirmDelete('deduction', <?php echo $deduccion['idTipoDeduccion']; ?>)"><i class="bi bi-trash-fill text-danger"></i></button>
+                                        </div>
+                                    </li>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <li class="list-group-item text-muted text-center p-3">No hay deducciones definidas.</li>
+                            <?php endif; ?>
+                        </ul>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Gestión de Deducciones -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header card-header-success d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="bi bi-cash-coin me-2"></i>Deducciones</h5>
-                    <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#modalDeduccion" onclick="nuevaDeduccion()">
-                        <i class="bi bi-plus-circle me-1"></i>Agregar
-                    </button>
-                </div>
-                <div class="card-body">
-                    <!-- Tabla de Deducciones -->
-                    <div class="table-responsive">
-                        <table class="table table-striped table-hover align-middle">
-                            <thead>
-                                <tr>
-                                    <th>Descripción</th>
-                                    <th>Porcentaje</th>
-                                    <th>Aplica General</th>
-                                    <th>Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (count($deducciones) > 0): ?>
-                                    <?php foreach ($deducciones as $deduccion): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars($deduccion['descripcion']); ?></td>
-                                            <td><?= $deduccion['Porcentaje'] !== null ? number_format($deduccion['Porcentaje'], 2) . '%' : 'N/A'; ?></td>
-                                            <td><?= $deduccion['aplica_general'] == 1 ? '<span class="badge badge-success">Sí</span>' : '<span class="badge badge-secondary">No</span>'; ?></td>
-                                            <td>
-                                                <!-- Botones de Editar y Eliminar -->
-                                                <button type="button" class="btn btn-sm btn-primary me-1" onclick='editarDeduccion(<?= json_encode($deduccion, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>)'>
-                                                    <i class="bi bi-pencil-square"></i>
-                                                </button>
-                                                <form method="post" style="display:inline-block;" onsubmit="return confirm('¿Está seguro de que desea eliminar esta deducción?');">
-                                                    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-                                                    <input type="hidden" name="idDeduccion" value="<?= $deduccion['idDeduccion']; ?>">
-                                                    <button type="submit" name="delete_deduction" class="btn btn-sm btn-danger">
-                                                        <i class="bi bi-trash"></i>
-                                                    </button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="4" class="text-center">No hay deducciones disponibles.</td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
+            <!-- Columna de Jerarquías -->
+            <div class="col-lg-7">
+                <div class="card">
+                    <div class="card-header"><h5 class="mb-0"><i class="bi bi-diagram-3-fill me-2"></i>Jerarquías</h5><button class="btn btn-sm btn-outline-primary" onclick="openJerarquiaModal()"><i class="bi bi-plus"></i></button></div>
+                    <div class="card-body p-3">
+                        <?php if ($jerarquias && $jerarquias->num_rows > 0): ?>
+                            <?php while ($jerarquia = $jerarquias->fetch_assoc()): ?>
+                                <div class="jerarquia-item d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div class="colaborador-info"><?php echo htmlspecialchars($jerarquia['colaborador_nombre']); ?></div>
+                                        <div class="departamento-info"><?php echo htmlspecialchars($jerarquia['departamento_nombre']); ?></div>
+                                        <div class="jefe-info mt-1">
+                                            <i class="bi bi-arrow-return-right"></i>
+                                            <span>Jefe: <?php echo htmlspecialchars($jerarquia['jefe_nombre'] ?? 'N/A'); ?></span>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <button class="btn btn-sm btn-light" onclick='openJerarquiaModal(<?php echo json_encode($jerarquia); ?>)'><i class="bi bi-pencil-fill text-primary"></i></button>
+                                        <button class="btn btn-sm btn-light" onclick="confirmDelete('jerarquia', <?php echo $jerarquia['idJerarquia']; ?>)"><i class="bi bi-trash-fill text-danger"></i></button>
+                                    </div>
+                                </div>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <div class="text-center text-muted p-5">No hay jerarquías definidas.</div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+    
+    <!-- Modals -->
+    <div class="modal fade" id="deductionModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="deductionForm" method="POST"><div class="modal-header"><h5 class="modal-title" id="deductionModalLabel"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" name="save_deduction" value="1"><input type="hidden" name="idTipoDeduccion" id="idTipoDeduccion"><div class="mb-3"><label for="nombre_deduccion" class="form-label">Nombre</label><input type="text" class="form-control" name="nombre_deduccion" id="nombre_deduccion" required></div><div class="mb-3"><label for="porcentaje" class="form-label">Porcentaje (%)</label><input type="number" step="0.01" class="form-control" name="porcentaje" id="porcentaje" required></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary">Guardar</button></div></form></div></div></div>
+    <div class="modal fade" id="jerarquiaModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><form id="jerarquiaForm" method="POST"><div class="modal-header"><h5 class="modal-title" id="jerarquiaModalLabel"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" name="save_jerarquia" value="1"><input type="hidden" name="idJerarquia" id="idJerarquia"><div class="mb-3"><label for="colaborador_id" class="form-label">Colaborador</label><select class="form-select" name="colaborador_id" id="colaborador_id" required><?php mysqli_data_seek($colaboradores, 0); while ($c = $colaboradores->fetch_assoc()) echo "<option value='{$c['idColaborador']}'>".htmlspecialchars($c['nombre_completo'])."</option>"; ?></select></div><div class="mb-3"><label for="jefe_id" class="form-label">Jefe Directo</label><select class="form-select" name="jefe_id" id="jefe_id"><option value="">-- Sin Jefe --</option><?php mysqli_data_seek($colaboradores, 0); while ($c = $colaboradores->fetch_assoc()) echo "<option value='{$c['idColaborador']}'>".htmlspecialchars($c['nombre_completo'])."</option>"; ?></select></div><div class="mb-3"><label for="departamento_id" class="form-label">Departamento</label><select class="form-select" name="departamento_id" id="departamento_id" required><?php mysqli_data_seek($departamentos, 0); while ($d = $departamentos->fetch_assoc()) echo "<option value='{$d['idDepartamento']}'>".htmlspecialchars($d['nombre'])."</option>"; ?></select></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary">Guardar</button></div></form></div></div></div>
+    <div class="modal fade" id="confirmDeleteModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Confirmar Eliminación</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p>¿Estás seguro de que deseas eliminar este registro? Esta acción es irreversible.</p></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="button" class="btn btn-danger" id="confirmDeleteBtn">Sí, Eliminar</button></div></div></div></div>
+    <form method="POST" id="deleteForm" style="display:none;"><input type="hidden" id="delete_id_input" name=""></form>
 
-    <!-- Gestión de Jerarquías -->
-    <div class="row">
-        <div class="col-12">
-            <div class="card">
-                <div class="card-header card-header-info d-flex justify-content-between align-items-center">
-                    <h5 class="mb-0"><i class="bi bi-people-fill me-2"></i>Jerarquías</h5>
-                    <button type="button" class="btn btn-light btn-sm" data-bs-toggle="modal" data-bs-target="#modalJerarquia" onclick="nuevaJerarquia()">
-                        <i class="bi bi-plus-circle me-1"></i>Agregar
-                    </button>
-                </div>
-                <div class="card-body">
-                    <!-- Tabla de Jerarquías -->
-                    <div class="table-responsive">
-                        <table class="table table-striped table-hover align-middle">
-                            <thead>
-                                <tr>
-                                    <th>Colaborador</th>
-                                    <th>Jefe</th>
-                                    <th>Departamento</th>
-                                    <th>Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php if (count($jerarquias) > 0): ?>
-                                    <?php foreach ($jerarquias as $jerarquia): ?>
-                                        <tr>
-                                            <td><?= htmlspecialchars($jerarquia['ColaboradorNombre'] . ' ' . $jerarquia['ColaboradorApellido']); ?></td>
-                                            <td><?= $jerarquia['JefeNombre'] ? htmlspecialchars($jerarquia['JefeNombre'] . ' ' . $jerarquia['JefeApellido']) : '<span class="badge badge-secondary">Sin Jefe</span>'; ?></td>
-                                            <td><?= htmlspecialchars($jerarquia['DepartamentoNombre']); ?></td>
-                                            <td>
-                                                <!-- Botones de Editar y Eliminar -->
-                                                <button type="button" class="btn btn-sm btn-primary me-1" onclick='editarJerarquia(<?= json_encode($jerarquia, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT); ?>)'>
-                                                    <i class="bi bi-pencil-square"></i>
-                                                </button>
-                                                <form method="post" style="display:inline-block;" onsubmit="return confirm('¿Está seguro de que desea eliminar esta jerarquía?');">
-                                                    <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-                                                    <input type="hidden" name="idJerarquia" value="<?= $jerarquia['idJerarquia']; ?>">
-                                                    <button type="submit" name="delete_jerarquia" class="btn btn-sm btn-danger">
-                                                        <i class="bi bi-trash"></i>
-                                                    </button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                <?php else: ?>
-                                    <tr>
-                                        <td colspan="4" class="text-center">No hay jerarquías disponibles.</td>
-                                    </tr>
-                                <?php endif; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const deductionModal = new bootstrap.Modal(document.getElementById('deductionModal'));
+        const jerarquiaModal = new bootstrap.Modal(document.getElementById('jerarquiaModal'));
+        const confirmDeleteModal = new bootstrap.Modal(document.getElementById('confirmDeleteModal'));
 
-</div>
+        function openDeductionModal(data = null) {
+            const form = document.getElementById('deductionForm'); form.reset();
+            if (data) {
+                const parts = data.Descripcion.split(':');
+                document.getElementById('deductionModalLabel').innerHTML = '<i class="bi bi-pencil-fill me-2"></i>Editar Deducción';
+                document.getElementById('idTipoDeduccion').value = data.idTipoDeduccion;
+                document.getElementById('nombre_deduccion').value = parts[0];
+                document.getElementById('porcentaje').value = parts[1] || '0.00';
+            } else {
+                document.getElementById('deductionModalLabel').innerHTML = '<i class="bi bi-plus-circle-fill me-2"></i>Nueva Deducción';
+                document.getElementById('idTipoDeduccion').value = '';
+            }
+            deductionModal.show();
+        }
 
-<!-- Modal para Agregar/Editar Deducción -->
-<div class="modal fade" id="modalDeduccion" tabindex="-1" aria-labelledby="modalDeduccionLabel" aria-hidden="true">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <form method="post">
-          <div class="modal-header">
-            <h5 class="modal-title" id="modalDeduccionLabel">Agregar Deducción</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-          </div>
-          <div class="modal-body">
-              <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-              <input type="hidden" id="idDeduccion" name="idDeduccion">
-              <div class="mb-3">
-                  <label for="descripcion" class="form-label">Descripción</label>
-                  <input type="text" class="form-control" id="descripcion" name="descripcion" required>
-              </div>
-              <div class="mb-3">
-                  <label for="porcentaje" class="form-label">Porcentaje (%)</label>
-                  <input type="number" step="0.01" class="form-control" id="porcentaje" name="porcentaje" required>
-              </div>
-              <div class="form-check">
-                  <input class="form-check-input" type="checkbox" id="aplica_general" name="aplica_general">
-                  <label class="form-check-label" for="aplica_general">
-                      Aplica a Todos los Colaboradores
-                  </label>
-              </div>
-          </div>
-          <div class="modal-footer">
-            <button type="submit" name="add_deduction" id="btnAddDeduction" class="btn btn-success"><i class="bi bi-plus-circle me-1"></i>Agregar</button>
-            <button type="submit" name="edit_deduction" id="btnEditDeduction" class="btn btn-primary" style="display:none;"><i class="bi bi-save me-1"></i>Guardar Cambios</button>
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="bi bi-x-circle me-1"></i>Cerrar</button>
-          </div>
-      </form>
-    </div>
-  </div>
-</div>
+        function openJerarquiaModal(data = null) {
+            const form = document.getElementById('jerarquiaForm'); form.reset();
+            if (data) {
+                document.getElementById('jerarquiaModalLabel').innerHTML = '<i class="bi bi-pencil-fill me-2"></i>Editar Jerarquía';
+                document.getElementById('idJerarquia').value = data.idJerarquia;
+                document.getElementById('colaborador_id').value = data.Colaborador_idColaborador;
+                document.getElementById('jefe_id').value = data.Jefe_idColaborador || '';
+                document.getElementById('departamento_id').value = data.Departamento_idDepartamento;
+            } else {
+                document.getElementById('jerarquiaModalLabel').innerHTML = '<i class="bi bi-plus-circle-fill me-2"></i>Nueva Jerarquía';
+                document.getElementById('idJerarquia').value = '';
+            }
+            jerarquiaModal.show();
+        }
 
-<!-- Modal para Agregar/Editar Jerarquía -->
-<div class="modal fade" id="modalJerarquia" tabindex="-1" aria-labelledby="modalJerarquiaLabel" aria-hidden="true">
-  <div class="modal-dialog">
-    <div class="modal-content">
-      <form method="post">
-          <div class="modal-header">
-            <h5 class="modal-title" id="modalJerarquiaLabel">Agregar Jerarquía</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-          </div>
-          <div class="modal-body">
-              <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-              <input type="hidden" id="idJerarquia" name="idJerarquia">
-              <div class="mb-3">
-                  <label for="colaborador_id" class="form-label">Colaborador</label>
-                  <select class="form-select" id="colaborador_id" name="colaborador_id" required>
-                      <option value="">Seleccione un colaborador</option>
-                      <?php foreach ($colaboradores as $colaborador): ?>
-                          <option value="<?= $colaborador['idColaborador']; ?>">
-                              <?= htmlspecialchars($colaborador['nombre'] . ' ' . $colaborador['apellido1']); ?>
-                          </option>
-                      <?php endforeach; ?>
-                  </select>
-              </div>
-              <div class="mb-3">
-                  <label for="jefe_id" class="form-label">Jefe</label>
-                  <select class="form-select" id="jefe_id" name="jefe_id">
-                      <option value="">Sin Jefe</option>
-                      <?php foreach ($jefes as $jefe): ?>
-                          <option value="<?= $jefe['idColaborador']; ?>">
-                              <?= htmlspecialchars($jefe['nombre'] . ' ' . $jefe['apellido1']); ?>
-                          </option>
-                      <?php endforeach; ?>
-                  </select>
-              </div>
-              <div class="mb-3">
-                  <label for="departamento_id" class="form-label">Departamento</label>
-                  <select class="form-select" id="departamento_id" name="departamento_id" required>
-                      <option value="">Seleccione un departamento</option>
-                      <?php foreach ($departamentos as $departamento): ?>
-                          <option value="<?= $departamento['idDepartamento']; ?>">
-                              <?= htmlspecialchars($departamento['nombre']); ?>
-                          </option>
-                      <?php endforeach; ?>
-                  </select>
-              </div>
-          </div>
-          <div class="modal-footer">
-            <button type="submit" name="add_jerarquia" id="btnAddJerarquia" class="btn btn-success"><i class="bi bi-plus-circle me-1"></i>Agregar</button>
-            <button type="submit" name="edit_jerarquia" id="btnEditJerarquia" class="btn btn-primary" style="display:none;"><i class="bi bi-save me-1"></i>Guardar Cambios</button>
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><i class="bi bi-x-circle me-1"></i>Cerrar</button>
-          </div>
-      </form>
-    </div>
-  </div>
-</div>
-
-<script>
-    // Funciones para Deducciones
-    function editarDeduccion(deduccion) {
-        // Llenar el formulario con los datos de la deducción
-        document.getElementById('modalDeduccionLabel').innerText = 'Editar Deducción';
-        document.getElementById('idDeduccion').value = deduccion.idDeduccion;
-        document.getElementById('descripcion').value = deduccion.descripcion;
-        document.getElementById('porcentaje').value = deduccion.Porcentaje;
-        document.getElementById('aplica_general').checked = deduccion.aplica_general == 1 ? true : false;
-
-        // Mostrar botón de Editar y ocultar botón de Agregar
-        document.getElementById('btnEditDeduction').style.display = 'inline-block';
-        document.getElementById('btnAddDeduction').style.display = 'none';
-    }
-
-    function nuevaDeduccion() {
-        // Limpiar el formulario
-        document.getElementById('modalDeduccionLabel').innerText = 'Agregar Deducción';
-        document.getElementById('idDeduccion').value = '';
-        document.getElementById('descripcion').value = '';
-        document.getElementById('porcentaje').value = '';
-        document.getElementById('aplica_general').checked = false;
-
-        // Mostrar botón de Agregar y ocultar botón de Editar
-        document.getElementById('btnEditDeduction').style.display = 'none';
-        document.getElementById('btnAddDeduction').style.display = 'inline-block';
-    }
-
-    // Funciones para Jerarquías
-    function editarJerarquia(jerarquia) {
-        // Llenar el formulario con los datos de la jerarquía
-        document.getElementById('modalJerarquiaLabel').innerText = 'Editar Jerarquía';
-        document.getElementById('idJerarquia').value = jerarquia.idJerarquia;
-        document.getElementById('colaborador_id').value = jerarquia.Colaborador_idColaborador;
-        document.getElementById('jefe_id').value = jerarquia.Jefe_idColaborador;
-        // Seleccionar el departamento
-        document.getElementById('departamento_id').value = jerarquia.Departamento_idDepartamento;
-
-        // Mostrar botón de Editar y ocultar botón de Agregar
-        document.getElementById('btnEditJerarquia').style.display = 'inline-block';
-        document.getElementById('btnAddJerarquia').style.display = 'none';
-
-        // Cambiar el título del modal
-        document.getElementById('modalJerarquiaLabel').innerText = 'Editar Jerarquía';
-    }
-
-    function nuevaJerarquia() {
-        // Limpiar el formulario
-        document.getElementById('modalJerarquiaLabel').innerText = 'Agregar Jerarquía';
-        document.getElementById('idJerarquia').value = '';
-        document.getElementById('colaborador_id').value = '';
-        document.getElementById('jefe_id').value = '';
-        document.getElementById('departamento_id').value = '';
-
-        // Mostrar botón de Agregar y ocultar botón de Editar
-        document.getElementById('btnEditJerarquia').style.display = 'none';
-        document.getElementById('btnAddJerarquia').style.display = 'inline-block';
-    }
-</script>
-
-<!-- Bootstrap JS Bundle -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
+        function confirmDelete(type, id) {
+            const confirmBtn = document.getElementById('confirmDeleteBtn');
+            const deleteForm = document.getElementById('deleteForm');
+            const input = document.getElementById('delete_id_input');
+            confirmBtn.onclick = function() {
+                input.name = `delete_${type}_id`;
+                input.value = id;
+                deleteForm.submit();
+            };
+            confirmDeleteModal.show();
+        }
+    </script>
 </body>
 </html>

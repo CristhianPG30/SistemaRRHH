@@ -1,271 +1,209 @@
-<?php 
-session_start();
+<?php
+// form_usuario.php - VERSIÓN FINAL CORREGIDA Y REDISEÑADA
+
+// Iniciar sesión y conectar a la base de datos
+session_start([
+    'cookie_httponly' => true,
+    'cookie_secure' => true,
+    'cookie_samesite' => 'Strict'
+]);
+
+// Código de seguridad para proteger la página
+if (!isset($_SESSION['username'])) {
+    header('Location: login.php');
+    exit;
+}
+// Solo un administrador (rol=1) puede acceder a esta página
+if ($_SESSION['rol'] != 1) {
+    die("Acceso denegado. No tienes permisos para gestionar usuarios.");
+}
+
 include 'db.php';
 
+// Generar token CSRF si no existe, para proteger el formulario
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Inicializar variables
+$is_edit_mode = false;
 $idUsuario = '';
-$username = 'usuario'; // Valor por defecto para el campo "Usuario". Cámbialo a '' si prefieres que esté vacío.
-$password = '';
-$IdRol = '';
-$Persona_idPersona = '';
-$change_password = false;
+$username = '';
+$id_rol_fk = '';
+$id_persona_fk = '';
+$error_message = '';
+$success_message = '';
 
-$error = ''; // Variable para mensajes de error
-$success = ''; // Variable para mensajes de éxito
+// --- Lógica para procesar el envío del formulario (cuando se da clic en Guardar/Actualizar) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // 1. Verificar el token de seguridad CSRF
+    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        die('Error de validación de seguridad. Por favor, recargue la página y vuelva a intentarlo.');
+    }
 
-// Consultar los roles y las personas de la base de datos
-$roles = $conn->query("SELECT * FROM idrol");
-$personas = $conn->query("SELECT * FROM persona");
+    // 2. Obtener y limpiar los datos del formulario
+    $idUsuario = isset($_POST['idUsuario']) ? intval($_POST['idUsuario']) : 0;
+    $username = trim($_POST['username']);
+    $password = trim($_POST['password']);
+    $id_rol_fk = intval($_POST['id_rol_fk']);
+    $id_persona_fk = intval($_POST['id_persona_fk']);
+    $is_edit_mode = ($idUsuario > 0);
 
-// Verificar si es edición (si hay un ID en la URL)
-if (isset($_GET['id']) && !empty($_GET['id']) && is_numeric($_GET['id'])) {
-    $idUsuario = intval($_GET['id']); // Convertir el id a un entero para mayor seguridad
+    // 3. Validaciones de negocio
+    if (empty($username) || empty($id_rol_fk) || (!$is_edit_mode && empty($id_persona_fk))) {
+        $error_message = "Por favor, completa todos los campos obligatorios.";
+    } elseif (!$is_edit_mode && empty($password)) {
+        $error_message = "La contraseña es obligatoria para nuevos usuarios.";
+    } else {
+        // Verificar si el nombre de usuario ya está en uso por OTRA persona
+        $stmt_check = $conn->prepare("SELECT idUsuario FROM usuario WHERE username = ? AND idUsuario != ?");
+        $stmt_check->bind_param("si", $username, $idUsuario);
+        $stmt_check->execute();
+        if ($stmt_check->get_result()->num_rows > 0) {
+            $error_message = "El nombre de usuario ya está en uso. Por favor, elija otro.";
+        }
+        $stmt_check->close();
+    }
 
-    // Usar consulta preparada para obtener los datos del usuario que se está editando
-    $stmt = $conn->prepare("SELECT * FROM usuario WHERE idUsuario = ?");
+    // 4. Si no hay errores de validación, proceder a guardar en la BD
+    if (empty($error_message)) {
+        if (!$is_edit_mode) {
+            // --- LÓGICA PARA CREAR NUEVO USUARIO ---
+            $hashed_password = password_hash($password, PASSWORD_DEFAULT); // Encriptar contraseña
+            $stmt = $conn->prepare("INSERT INTO usuario (username, password, id_rol_fk, id_persona_fk) VALUES (?, ?, ?, ?)");
+            $stmt->bind_param("ssii", $username, $hashed_password, $id_rol_fk, $id_persona_fk);
+        } else {
+            // --- LÓGICA PARA ACTUALIZAR USUARIO EXISTENTE ---
+            if (!empty($password)) {
+                // Si se proporcionó una nueva contraseña, se encripta y actualiza
+                $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("UPDATE usuario SET username = ?, password = ?, id_rol_fk = ? WHERE idUsuario = ?");
+                $stmt->bind_param("ssii", $username, $hashed_password, $id_rol_fk, $idUsuario);
+            } else {
+                // Si no se cambia la contraseña, solo se actualizan los otros campos
+                $stmt = $conn->prepare("UPDATE usuario SET username = ?, id_rol_fk = ? WHERE idUsuario = ?");
+                $stmt->bind_param("sii", $username, $id_rol_fk, $idUsuario);
+            }
+        }
+        
+        if ($stmt->execute()) {
+            $_SESSION['message'] = "Operación de usuario realizada con éxito.";
+            $_SESSION['message_type'] = "success";
+            header("Location: usuarios.php"); // Redirigir a la lista de usuarios
+            exit;
+        } else {
+            $error_message = "Error al guardar el usuario: " . $stmt->error;
+        }
+        $stmt->close();
+    }
+}
+
+// --- Lógica para mostrar el formulario (cuando se carga la página) ---
+if (isset($_GET['id']) && !empty($_GET['id'])) {
+    $is_edit_mode = true;
+    $idUsuario = intval($_GET['id']);
+    $stmt = $conn->prepare("SELECT username, id_rol_fk, id_persona_fk FROM usuario WHERE idUsuario = ?");
     $stmt->bind_param("i", $idUsuario);
     $stmt->execute();
     $result = $stmt->get_result();
-    
     if ($result->num_rows === 1) {
-        $row = $result->fetch_assoc();
-        $username = $row['username']; // Sobrescribir el valor por defecto si hay un nombre de usuario
-        $IdRol = $row['IdRol_idIdRol'];
-        $Persona_idPersona = $row['Persona_idPersona'];
-    } else {
-        $error = "Usuario no encontrado.";
-    }
-
-    $stmt->close(); // Cerrar la consulta preparada
+        $user_data = $result->fetch_assoc();
+        $username = $user_data['username'];
+        $id_rol_fk = $user_data['id_rol_fk'];
+        $id_persona_fk = $user_data['id_persona_fk'];
+    } else { $error_message = "Usuario no encontrado."; }
+    $stmt->close();
 }
 
-// Procesar el formulario cuando se envía
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save'])) {
-    // Obtener y sanitizar los datos del formulario
-    $username = trim($_POST['username']);
-    $change_password = isset($_POST['change_password']);
-    $password = $change_password ? trim($_POST['password']) : '';
-    $IdRol = intval($_POST['IdRol']);
-    $Persona_idPersona = intval($_POST['Persona_idPersona']);
-
-    // Validaciones básicas
-    if (empty($username) || empty($IdRol) || empty($Persona_idPersona)) {
-        $error = "Por favor, completa todos los campos obligatorios.";
-    }
-
-    if ($change_password && empty($password)) {
-        $error = "Por favor, ingresa una nueva contraseña o desmarca la opción para no cambiarla.";
-    }
-
-    if (empty($error)) {
-        // Verificar si el nombre de usuario ya existe
-        $stmt = $conn->prepare("SELECT * FROM usuario WHERE username = ? AND idUsuario != ?");
-        $stmt->bind_param("si", $username, $idUsuario);
-        $stmt->execute();
-        $check_username = $stmt->get_result();
-
-        if ($check_username->num_rows > 0) {
-            $error = "El nombre de usuario ya está en uso. Por favor, elija otro.";
-        }
-
-        $stmt->close();
-
-        // Verificar si la persona ya está asociada a un usuario
-        $stmt = $conn->prepare("SELECT * FROM usuario WHERE Persona_idPersona = ? AND idUsuario != ?");
-        $stmt->bind_param("ii", $Persona_idPersona, $idUsuario);
-        $stmt->execute();
-        $check_persona = $stmt->get_result();
-
-        if ($check_persona->num_rows > 0) {
-            $error = "Esta persona ya está asociada a un usuario.";
-        }
-
-        $stmt->close();
-
-        // Si no hay errores, proceder a insertar o actualizar el registro
-        if (empty($error)) {
-            if (empty($idUsuario)) {
-                // Crear nuevo usuario
-                $stored_password = !empty($password) ? $password : NULL;
-                $stmt = $conn->prepare("INSERT INTO usuario (username, password, IdRol_idIdRol, Persona_idPersona) 
-                                        VALUES (?, ?, ?, ?)");
-                $stmt->bind_param("ssii", $username, $stored_password, $IdRol, $Persona_idPersona);
-                if ($stmt->execute()) {
-                    $success = "Usuario agregado con éxito.";
-                    $username = $password = '';
-                    $IdRol = '';
-                    $Persona_idPersona = '';
-                } else {
-                    $error = "Error al agregar el usuario: " . $stmt->error;
-                }
-            } else {
-                // Actualizar usuario existente
-                if ($change_password && !empty($password)) {
-                    $stored_password = $password;
-                    $stmt = $conn->prepare("UPDATE usuario SET username = ?, password = ?, 
-                                            IdRol_idIdRol = ?, Persona_idPersona = ? 
-                                            WHERE idUsuario = ?");
-                    $stmt->bind_param("ssiii", $username, $stored_password, $IdRol, $Persona_idPersona, $idUsuario);
-                } else {
-                    $stmt = $conn->prepare("UPDATE usuario SET username = ?, 
-                                            IdRol_idIdRol = ?, Persona_idPersona = ? 
-                                            WHERE idUsuario = ?");
-                    $stmt->bind_param("siii", $username, $IdRol, $Persona_idPersona, $idUsuario);
-                }
-
-                if ($stmt->execute()) {
-                    $success = "Usuario actualizado con éxito.";
-                } else {
-                    $error = "Error al actualizar el usuario: " . $stmt->error;
-                }
-                $stmt->close();
-            }
-        }
-    }
-}
+// Cargar datos para los menús desplegables
+$roles = $conn->query("SELECT idIdRol, descripcion FROM idrol");
+// La consulta de personas es diferente si estamos editando o creando
+$personas_query_sql = "SELECT idPersona, Nombre, Apellido1 FROM persona WHERE idPersona NOT IN (SELECT id_persona_fk FROM usuario" . ($is_edit_mode ? " WHERE idUsuario != $idUsuario" : "") . ")";
+$personas_sin_usuario = $conn->query($personas_query_sql);
 ?>
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?php echo empty($idUsuario) ? 'Agregar Usuario' : 'Editar Usuario'; ?></title>
+    <title><?php echo $is_edit_mode ? 'Editar Usuario' : 'Agregar Usuario'; ?></title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
     <style>
-        body {
-            background-color: #f4f6f9;
-        }
-        .container {
-            max-width: 600px;
-            margin-top: 50px;
-            margin-bottom: 50px;
-        }
-        .card {
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
-            background-color: #ffffff;
-        }
-        .card-header {
-            background-color: #343a40;
-            color: #ffffff;
-            border-top-left-radius: 10px;
-            border-top-right-radius: 10px;
-        }
-        .btn-save {
-            background-color: #5cb85c;
-            border-color: #5cb85c;
-            color: #ffffff;
-        }
-        .btn-save:hover {
-            background-color: #4cae4c;
-            border-color: #4cae4c;
-        }
-        .btn-cancel {
-            background-color: #dc3545;
-            border-color: #dc3545;
-            color: #ffffff;
-        }
-        .btn-cancel:hover {
-            background-color: #c82333;
-            border-color: #bd2130;
-        }
-        .form-label.required::after {
-            content: " *";
-            color: red;
-        }
-        .alert {
-            border-radius: 5px;
-        }
+        body { background-color: #f4f6f9; }
+        .container { max-width: 700px; margin-top: 30px; }
+        .card { border-radius: 15px; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1); }
+        .card-header { background-color: #343a40; color: #ffffff; text-align: center; border-top-left-radius: 15px; border-top-right-radius: 15px; padding: 1.2rem; }
+        .form-label.required::after { content: " *"; color: red; }
     </style>
 </head>
 <body>
     <?php include 'header.php'; ?>
     <div class="container">
-        <div class="card p-4">
+        <div class="card">
             <div class="card-header">
-                <h3 class="mb-0"><?php echo empty($idUsuario) ? 'Agregar Usuario' : 'Editar Usuario'; ?></h3>
+                <h3 class="mb-0"><?php echo $is_edit_mode ? 'Editar Usuario' : 'Agregar Nuevo Usuario'; ?></h3>
             </div>
-            <div class="card-body">
-                <?php if (!empty($success)): ?>
-                    <div class="alert alert-success alert-dismissible fade show" role="alert">
-                        <?php echo htmlspecialchars($success); ?>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
-                    </div>
+            <div class="card-body p-4">
+                <?php if (!empty($error_message)): ?>
+                    <div class="alert alert-danger"><?php echo htmlspecialchars($error_message); ?></div>
                 <?php endif; ?>
-                <?php if (!empty($error)): ?>
-                    <div class="alert alert-danger alert-dismissible fade show" role="alert">
-                        <?php echo htmlspecialchars($error); ?>
-                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
-                    </div>
-                <?php endif; ?>
-                <form action="form_usuario.php<?php if (!empty($idUsuario)) { echo '?id=' . $idUsuario; } ?>" method="POST">
+
+                <form method="POST" action="form_usuario.php<?php echo $is_edit_mode ? '?id=' . $idUsuario : ''; ?>">
+                    <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                    <input type="hidden" name="idUsuario" value="<?php echo $idUsuario; ?>">
+                    
                     <div class="mb-3">
-                        <label for="username" class="form-label required">Usuario</label>
-                        <input type="text" class="form-control" id="username" name="username" value="<?php echo htmlspecialchars($username); ?>" required>
+                        <label for="username" class="form-label required">Nombre de Usuario</label>
+                        <input type="text" class="form-control" name="username" value="<?php echo htmlspecialchars($username); ?>" required>
                     </div>
-                    <?php if (!empty($idUsuario)): ?>
-                        <div class="mb-3 form-check">
-                            <input type="checkbox" class="form-check-input" id="change_password" name="change_password" <?php echo $change_password ? 'checked' : ''; ?>>
-                            <label class="form-check-label" for="change_password">Cambiar contraseña</label>
-                        </div>
-                    <?php endif; ?>
-                    <div class="mb-3" id="password_field" style="<?php echo (!empty($idUsuario) && !$change_password) ? 'display: none;' : ''; ?>">
-                        <label for="password" class="form-label <?php echo empty($idUsuario) ? 'required' : ''; ?>">
-                            <?php echo empty($idUsuario) ? 'Contraseña' : 'Nueva Contraseña'; ?>
+
+                    <div class="mb-3">
+                        <label for="password" class="form-label <?php echo !$is_edit_mode ? 'required' : ''; ?>">
+                            <?php echo $is_edit_mode ? 'Nueva Contraseña (dejar en blanco para no cambiar)' : 'Contraseña'; ?>
                         </label>
-                        <input type="password" class="form-control" id="password" name="password" <?php echo (empty($idUsuario) || $change_password) ? 'required' : ''; ?>>
+                        <input type="password" class="form-control" name="password" <?php echo !$is_edit_mode ? 'required' : ''; ?>>
                     </div>
+                    
                     <div class="mb-3">
-                        <label for="IdRol" class="form-label required">Tipo de Rol</label>
-                        <select class="form-select" id="IdRol" name="IdRol" required>
+                        <label for="id_rol_fk" class="form-label required">Rol</label>
+                        <select class="form-select" name="id_rol_fk" required>
                             <option value="">Seleccione un rol</option>
-                            <?php while ($rol = $roles->fetch_assoc()): ?>
-                                <option value="<?php echo $rol['idIdRol']; ?>" <?php if ($IdRol == $rol['idIdRol']) echo 'selected'; ?>>
-                                    <?php echo htmlspecialchars($rol['Descripcion']); ?>
-                                </option>
+                            <?php mysqli_data_seek($roles, 0); while ($rol = $roles->fetch_assoc()): ?>
+                                <option value="<?php echo $rol['idIdRol']; ?>" <?php if ($id_rol_fk == $rol['idIdRol']) echo 'selected'; ?>><?php echo htmlspecialchars($rol['descripcion']); ?></option>
                             <?php endwhile; ?>
                         </select>
                     </div>
+                    
                     <div class="mb-3">
-                        <label for="Persona_idPersona" class="form-label required">Persona Asociada</label>
-                        <select class="form-select" id="Persona_idPersona" name="Persona_idPersona" required>
-                            <option value="">Seleccione una persona</option>
-                            <?php while ($persona = $personas->fetch_assoc()): ?>
-                                <option value="<?php echo $persona['idPersona']; ?>" <?php if ($Persona_idPersona == $persona['idPersona']) echo 'selected'; ?>>
-                                    <?php echo htmlspecialchars($persona['Nombre'] . ' ' . $persona['Apellido1'] . ' ' . $persona['Apellido2']); ?>
-                                </option>
-                            <?php endwhile; ?>
+                        <label for="id_persona_fk" class="form-label required">Persona a Asociar</label>
+                        <select class="form-select" name="id_persona_fk" <?php echo $is_edit_mode ? 'disabled' : 'required'; ?>>
+                            <?php if ($is_edit_mode): 
+                                $persona_actual_q = $conn->query("SELECT Nombre, Apellido1 FROM persona WHERE idPersona = " . intval($id_persona_fk));
+                                if($persona_actual = $persona_actual_q->fetch_assoc()): ?>
+                                    <option value="<?php echo $id_persona_fk; ?>" selected><?php echo htmlspecialchars($persona_actual['Nombre'] . ' ' . $persona_actual['Apellido1']); ?></option>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <option value="">Seleccione una persona sin usuario</option>
+                                <?php mysqli_data_seek($personas_sin_usuario, 0); ?>
+                                <?php while ($persona = $personas_sin_usuario->fetch_assoc()): ?>
+                                    <option value="<?php echo $persona['idPersona']; ?>"><?php echo htmlspecialchars($persona['Nombre'] . ' ' . $persona['Apellido1']); ?></option>
+                                <?php endwhile; ?>
+                            <?php endif; ?>
                         </select>
+                         <?php if ($is_edit_mode): ?>
+                            <input type="hidden" name="id_persona_fk" value="<?php echo $id_persona_fk; ?>">
+                            <small class="form-text text-muted">La persona asociada a un usuario no puede ser cambiada.</small>
+                        <?php endif; ?>
                     </div>
-                    <div class="d-flex justify-content-between">
-                        <a href="usuarios.php" class="btn btn-cancel"><i class="bi bi-x-circle me-1"></i>Cancelar</a>
-                        <button type="submit" name="save" class="btn btn-save"><i class="bi bi-save me-1"></i><?php echo empty($idUsuario) ? 'Guardar' : 'Actualizar'; ?></button>
+                    
+                    <div class="d-flex justify-content-between mt-4">
+                        <a href="usuarios.php" class="btn btn-secondary"><i class="bi bi-x-circle me-1"></i>Cancelar</a>
+                        <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i><?php echo $is_edit_mode ? 'Actualizar Usuario' : 'Guardar Usuario'; ?></button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const changePasswordCheckbox = document.getElementById('change_password');
-            const passwordField = document.getElementById('password_field');
-            const passwordInput = document.getElementById('password');
-
-            if (changePasswordCheckbox) {
-                changePasswordCheckbox.addEventListener('change', function () {
-                    if (this.checked) {
-                        passwordField.style.display = 'block';
-                        passwordInput.required = true;
-                    } else {
-                        passwordField.style.display = 'none';
-                        passwordInput.required = false;
-                        passwordInput.value = '';
-                    }
-                });
-            }
-        });
-    </script>
 </body>
 </html>

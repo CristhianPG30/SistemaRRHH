@@ -14,15 +14,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $username = sanitize_input($_POST['username']);
     $password = sanitize_input($_POST['password']);
     
-    // Validar entradas
     if (empty($username) || empty($password)) {
         $errorMessage = "Por favor, ingresa tu usuario y contraseña.";
     } else {
-        // Consulta para obtener información del usuario con validación sensible a mayúsculas y símbolos
+        // Consulta para obtener información del usuario
         $sql = "SELECT u.*, c.idColaborador, c.activo 
                 FROM usuario u 
-                LEFT JOIN colaborador c ON u.Persona_idPersona = c.Persona_idPersona 
+                LEFT JOIN colaborador c ON u.id_persona_fk = c.id_persona_fk 
                 WHERE BINARY u.username = ?";
+        
         $stmt = $conn->prepare($sql);
         if ($stmt) {
             $stmt->bind_param("s", $username);
@@ -33,29 +33,28 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $user = $result->fetch_assoc();
         
                 // Verificar la contraseña
-                if ($password == $user['password']) { // Mantener esta comparación si las contraseñas están en texto plano
+                if ($password == $user['password']) {
                     if ($user['activo'] == 1 || is_null($user['activo'])) {
                         // Asignar variables de sesión
                         $_SESSION['username'] = $user['username'];
-                        $_SESSION['rol'] = $user['IdRol_idIdRol'];
-                        $_SESSION['persona_id'] = $user['Persona_idPersona'];
+                        $_SESSION['rol'] = $user['id_rol_fk'];
+                        $_SESSION['persona_id'] = $user['id_persona_fk'];
         
-                        // Asigna `colaborador_id` si existe, de lo contrario, establece un valor por defecto o elimina la variable
                         if (!empty($user['idColaborador'])) {
                             $_SESSION['colaborador_id'] = $user['idColaborador'];
                         } else {
                             unset($_SESSION['colaborador_id']);
                         }
         
-                        // Recuperar información de jerarquía y departamento si es colaborador
+                        // --- INICIO DE LA CORRECCIÓN ---
+                        // Recuperar información del jefe y departamento directamente desde la tabla colaborador
                         if (!empty($user['idColaborador'])) {
                             $colaborador_id = $user['idColaborador'];
                             
-                            // Obtener información de jerarquía
-                            $sql_jerarquia = "SELECT j.Jefe_idColaborador, j.Departamento_idDepartamento, d.nombre AS NombreDepartamento
-                                              FROM jerarquia j
-                                              JOIN departamento d ON j.Departamento_idDepartamento = d.idDepartamento
-                                              WHERE j.Colaborador_idColaborador = ?";
+                            $sql_jerarquia = "SELECT c.id_jefe_fk, c.id_departamento_fk, d.nombre AS NombreDepartamento
+                                              FROM colaborador c
+                                              JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
+                                              WHERE c.idColaborador = ?";
                             $stmt_jerarquia = $conn->prepare($sql_jerarquia);
                             if ($stmt_jerarquia) {
                                 $stmt_jerarquia->bind_param("i", $colaborador_id);
@@ -63,44 +62,32 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 $result_jerarquia = $stmt_jerarquia->get_result();
                                 if ($result_jerarquia->num_rows > 0) {
                                     $jerarquia = $result_jerarquia->fetch_assoc();
-                                    $_SESSION['Jefe_idColaborador'] = $jerarquia['Jefe_idColaborador'];
-                                    $_SESSION['Departamento_idDepartamento'] = $jerarquia['Departamento_idDepartamento'];
+                                    $_SESSION['Jefe_idColaborador'] = $jerarquia['id_jefe_fk'];
+                                    $_SESSION['Departamento_idDepartamento'] = $jerarquia['id_departamento_fk'];
                                     $_SESSION['NombreDepartamento'] = $jerarquia['NombreDepartamento'];
                                 } else {
-                                    // Manejar el caso donde no se encuentra la jerarquía
                                     $_SESSION['Jefe_idColaborador'] = null;
                                     $_SESSION['Departamento_idDepartamento'] = null;
                                     $_SESSION['NombreDepartamento'] = 'Sin Departamento';
                                 }
                                 $stmt_jerarquia->close();
                             } else {
-                                // Manejar error en la preparación de la consulta de jerarquía
-                                $errorMessage = "Error interno. Inténtalo de nuevo más tarde.";
+                                $errorMessage = "Error interno al buscar jerarquía. Inténtalo de nuevo más tarde.";
                             }
                         } else {
-                            // Si no es colaborador, establecer variables de jerarquía a null
                             $_SESSION['Jefe_idColaborador'] = null;
                             $_SESSION['Departamento_idDepartamento'] = null;
                             $_SESSION['NombreDepartamento'] = 'Sin Departamento';
                         }
+                        // --- FIN DE LA CORRECCIÓN ---
         
                         // Redirige según el rol
-                        switch ($user['IdRol_idIdRol']) {
-                            case 1:
-                                header("Location: index_administrador.php");
-                                break;
-                            case 2:
-                                header("Location: index_colaborador.php");
-                                break;
-                            case 3:
-                                header("Location: index_jefatura.php");
-                                break;
-                            case 4:
-                                header("Location: index_rrhh.php");
-                                break;
-                            default:
-                                header("Location: login.php");
-                                break;
+                        switch ($_SESSION['rol']) {
+                            case 1: header("Location: index_administrador.php"); break;
+                            case 2: header("Location: index_colaborador.php"); break;
+                            case 3: header("Location: index_jefatura.php"); break;
+                            case 4: header("Location: index_rrhh.php"); break;
+                            default: header("Location: login.php"); break;
                         }
                         exit();
                     } else {
@@ -112,10 +99,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             } else {
                 $errorMessage = "Usuario o contraseña incorrectos.";
             }
-        
             $stmt->close();
         } else {
-            // Manejar error en la preparación de la consulta
             $errorMessage = "Error interno. Inténtalo de nuevo más tarde.";
         }
     }
@@ -125,7 +110,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">

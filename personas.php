@@ -1,74 +1,128 @@
-<?php  
-// Iniciar la sesión
+<?php
 session_start();
-include 'db.php';  // Asegúrate de tener la conexión a la base de datos correctamente
+include 'db.php'; // Conexión a la base de datos
+
+// Verificar si el usuario está autenticado y tiene permisos
+if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
+    header('Location: login.php');
+    exit;
+}
+
+$message = '';
+$message_type = '';
+
+// --- INICIO DE LÓGICA DE GESTIÓN ---
+
+// Manejo de la activación/desactivación de un colaborador
+if (isset($_GET['toggle_id'])) {
+    $idPersona = intval($_GET['toggle_id']);
+    
+    // Buscar si el colaborador ya existe
+    $stmt = $conn->prepare("SELECT idColaborador, activo FROM colaborador WHERE Persona_idPersona = ?");
+    $stmt->bind_param("i", $idPersona);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    
+    if ($result->num_rows > 0) {
+        $colaborador = $result->fetch_assoc();
+        $nuevoEstado = $colaborador['activo'] ? 0 : 1;
+        
+        $stmt_update = $conn->prepare("UPDATE colaborador SET activo = ? WHERE Persona_idPersona = ?");
+        $stmt_update->bind_param("ii", $nuevoEstado, $idPersona);
+        if($stmt_update->execute()){
+            $message = 'Estado del colaborador actualizado correctamente.';
+            $message_type = 'success';
+        } else {
+            $message = 'Error al actualizar el estado.';
+            $message_type = 'danger';
+        }
+        $stmt_update->close();
+    }
+    $stmt->close();
+}
 
 // Manejo de la eliminación de una persona
-if (isset($_GET['delete_id'])) {
-    $idPersona = $_GET['delete_id'];
+if (isset($_POST['delete_id'])) {
+    $idPersona = intval($_POST['delete_id']);
 
-    if (is_numeric($idPersona)) {
-        // Eliminar registros relacionados en la tabla 'colaborador' primero
-        $deleteColaboradorQuery = "DELETE FROM colaborador WHERE Persona_idPersona = $idPersona";
-        $conn->query($deleteColaboradorQuery);  // Ejecutar la consulta para eliminar en 'colaborador'
+    $conn->begin_transaction();
+    
+    try {
+        // Eliminar registros dependientes
+        $conn->query("DELETE FROM usuario WHERE id_persona_fk = $idPersona");
+        // La tabla colaborador tiene una clave foránea, pero por seguridad la eliminamos primero
+        $conn->query("DELETE FROM colaborador WHERE id_persona_fk = $idPersona");
+        // Añadir aquí otras eliminaciones en cascada si es necesario...
 
-        // Eliminar registros relacionados en la tabla 'usuario', si es necesario
-        $deleteUsuarioQuery = "DELETE FROM usuario WHERE Persona_idPersona = $idPersona";
-        $conn->query($deleteUsuarioQuery);  // Ejecutar la consulta para eliminar en 'usuario'
-
-        // Consulta SQL para eliminar la persona
-        $query = "DELETE FROM persona WHERE idPersona = $idPersona";
-        if ($conn->query($query)) {
-            // Redirigir con un mensaje de éxito
-            header("Location: personas.php?success=deleted");
-            exit();
-        } else {
-            echo "Error al eliminar la persona: " . $conn->error;
-        }
-    } else {
-        echo "ID inválido.";
+        // Finalmente, eliminar la persona
+        $stmt = $conn->prepare("DELETE FROM persona WHERE idPersona = ?");
+        $stmt->bind_param("i", $idPersona);
+        $stmt->execute();
+        
+        $conn->commit();
+        $message = 'Persona eliminada correctamente.';
+        $message_type = 'success';
+        
+    } catch (mysqli_sql_exception $exception) {
+        $conn->rollback();
+        $message = 'Error al eliminar la persona. Puede tener registros asociados.';
+        $message_type = 'danger';
     }
 }
 
-// Manejo de la activación/desactivación de la persona
-if (isset($_GET['toggle_id'])) {
-    $idPersona = $_GET['toggle_id'];
+// --- FIN DE LÓGICA DE GESTIÓN ---
 
-    // Consultar el colaborador asociado a la persona para obtener el estado actual
-    $queryColaborador = "SELECT idColaborador, activo FROM colaborador WHERE Persona_idPersona = $idPersona";
-    $resultColaborador = $conn->query($queryColaborador);
+// --- INICIO DE CORRECCIÓN DE CONSULTA DE DEPARTAMENTOS ---
+// Obtener listas para filtros y formularios (Consulta corregida)
+$departamentos = $conn->query("
+    SELECT d.idDepartamento, d.nombre 
+    FROM departamento d
+    JOIN estado_cat e ON d.id_estado_fk = e.idEstado
+    WHERE e.Descripcion = 'Activo'
+");
+// --- FIN DE CORRECCIÓN DE CONSULTA DE DEPARTAMENTOS ---
 
-    if ($resultColaborador && $resultColaborador->num_rows > 0) {
-        // Si el colaborador existe, alternar su estado
-        $colaborador = $resultColaborador->fetch_assoc();
-        $idColaborador = $colaborador['idColaborador'];
-        $estadoActual = $colaborador['activo'];
+$departamento_id_filter = isset($_GET['departamento_id']) ? intval($_GET['departamento_id']) : '';
+$search_term = isset($_GET['search']) ? $conn->real_escape_string($_GET['search']) : '';
 
-        // Alternar el estado actual
-        $nuevoEstado = $estadoActual == 1 ? 0 : 1;
-        $updateQuery = "UPDATE colaborador SET activo = $nuevoEstado WHERE idColaborador = $idColaborador";
 
-        if ($conn->query($updateQuery)) {
-            header("Location: personas.php");
-            exit();
-        } else {
-            echo "Error al actualizar el estado: " . $conn->error;
-        }
-    } else {
-        // Si no se encuentra un colaborador, crearlo y marcarlo como activo
-        $insertQuery = "INSERT INTO colaborador (Persona_idPersona, activo, Fechadeingreso) VALUES ($idPersona, 1, NOW())";
-        if ($conn->query($insertQuery)) {
-            header("Location: personas.php");
-            exit();
-        } else {
-            echo "Error al crear el colaborador: " . $conn->error;
-        }
-    }
+// --- INICIO DE CORRECCIÓN DE CONSULTA PRINCIPAL ---
+// Construcción de la consulta principal (corregida para que coincida con el esquema)
+$sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula,
+               d.nombre AS Departamento, c.activo AS Estado
+        FROM persona p
+        LEFT JOIN colaborador c ON p.idPersona = c.id_persona_fk
+        LEFT JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
+        WHERE 1=1";
+// --- FIN DE CORRECCIÓN DE CONSULTA PRINCIPAL ---
+
+
+$params = [];
+$types = '';
+
+if ($departamento_id_filter) {
+    // La columna del departamento está en 'colaborador', no en 'persona'
+    $sql .= " AND c.id_departamento_fk = ?";
+    $params[] = $departamento_id_filter;
+    $types .= 'i';
 }
 
-// Obtener todos los departamentos
-$departamentos = $conn->query("SELECT * FROM departamento");
-$departamento_id = isset($_GET['departamento_id']) ? $_GET['departamento_id'] : '';
+if ($search_term) {
+    $sql .= " AND (p.Nombre LIKE ? OR p.Apellido1 LIKE ? OR p.Cedula LIKE ?)";
+    $like_term = "%" . $search_term . "%";
+    $params[] = $like_term;
+    $params[] = $like_term;
+    $params[] = $like_term;
+    $types .= 'sss';
+}
+
+$stmt = $conn->prepare($sql);
+if ($types) {
+    $stmt->bind_param($types, ...$params);
+}
+$stmt->execute();
+$result_personas = $stmt->get_result();
+
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -76,183 +130,43 @@ $departamento_id = isset($_GET['departamento_id']) ? $_GET['departamento_id'] : 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mantenimiento de Personas</title>
-    <!-- Bootstrap CSS -->
+    <title>Gestión de Personas - Edginton S.A.</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
 
     <style>
         body {
             font-family: 'Roboto', sans-serif;
-            background-color: #f5f5f5; /* Fondo suave y neutro */
+            background-color: #f4f6f9;
         }
 
-        .container {
-            padding-top: 40px;
-            padding-bottom: 40px;
-        }
-
-        h2 {
-            font-size: 2rem;
-            color: #343a40;
-            text-align: center;
-            margin-bottom: 30px;
-            font-weight: 500;
-        }
-
-        /* Botón Agregar Persona */
-        .btn-add {
-            background-color: #28a745;
-            border-color: #28a745;
-            color: #ffffff;
-            transition: background-color 0.3s, border-color 0.3s;
-        }
-
-        .btn-add:hover {
-            background-color: #218838;
-            border-color: #1e7e34;
-            color: #ffffff;
-        }
-
-        /* Tabla de Personas */
-        .table {
-            background-color: #ffffff;
-            border-radius: 5px;
-            overflow: hidden;
+        .card-main {
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
         }
 
         .table thead th {
-            background-color: #343a40; /* Color oscuro y neutro */
-            color: #ffffff;
-            border: 1px solid #dee2e6;
-            text-align: center;
+            background-color: #343a40;
+            color: #fff;
             vertical-align: middle;
-            font-weight: 500;
         }
-
-        .table tbody td {
-            border: 1px solid #dee2e6;
-            text-align: center;
-            vertical-align: middle;
-            font-size: 0.95rem;
-        }
-
-        .table tbody tr:nth-of-type(odd) {
+        
+        .table-hover tbody tr:hover {
             background-color: #f8f9fa;
         }
 
-        .table tbody tr:hover {
-            background-color: #e2e6ea;
-        }
-
-        /* Botones de Acción */
         .btn-action {
-            width: 35px;
-            height: 35px;
-            padding: 0;
-            border-radius: 4px;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: transform 0.2s;
+            width: 38px;
+            height: 38px;
         }
 
-        .btn-action:hover {
-            transform: scale(1.05);
+        .status-badge {
+            font-size: 0.8rem;
+            padding: 0.4em 0.7em;
+            font-weight: 500;
         }
 
-        .btn-edit {
-            background-color: #0056b3; /* Azul más oscuro */
-            border-color: #0056b3;
-            color: #ffffff;
-        }
-
-        .btn-edit:hover {
-            background-color: #004494;
-            border-color: #003776;
-            color: #ffffff;
-        }
-
-        .btn-delete {
-            background-color: #dc3545; /* Rojo */
-            border-color: #dc3545;
-            color: #ffffff;
-        }
-
-        .btn-delete:hover {
-            background-color: #c82333;
-            border-color: #bd2130;
-            color: #ffffff;
-        }
-
-        /* Modal de Confirmación */
-        .modal-header {
-            background-color: #343a40;
-            color: #ffffff;
-        }
-
-        .modal-footer .btn-secondary {
-            background-color: #6c757d;
-            border-color: #6c757d;
-            color: #ffffff;
-        }
-
-        .modal-footer .btn-secondary:hover {
-            background-color: #5a6268;
-            border-color: #545b62;
-            color: #ffffff;
-        }
-
-        .modal-footer .btn-delete {
-            background-color: #dc3545;
-            border-color: #dc3545;
-            color: #ffffff;
-        }
-
-        .modal-footer .btn-delete:hover {
-            background-color: #c82333;
-            border-color: #bd2130;
-            color: #ffffff;
-        }
-
-        /* Mensajes de Alerta */
-        .alert {
-            border-radius: 4px;
-            padding: 15px;
-            margin-bottom: 20px;
-        }
-
-        /* Filtro por Departamento */
-        .form-select {
-            max-width: 300px;
-            margin: 0 auto 20px auto;
-        }
-
-        /* Responsividad */
-        @media (max-width: 768px) {
-            .form-select {
-                width: 100%;
-            }
-
-            .btn-add {
-                width: 100%;
-                text-align: center;
-                margin-top: 10px;
-            }
-
-            .table thead th,
-            .table tbody td {
-                font-size: 0.85rem;
-                padding: 10px;
-            }
-
-            h2 {
-                font-size: 1.8rem;
-            }
-        }
     </style>
 </head>
 
@@ -260,148 +174,123 @@ $departamento_id = isset($_GET['departamento_id']) ? $_GET['departamento_id'] : 
 
     <?php include 'header.php'; ?>
 
-    <div class="container">
-        <h2>Lista de Personas</h2>
-
-        <!-- Filtro por departamento -->
-        <form method="GET" class="mb-3 text-center">
-            <select name="departamento_id" class="form-select" onchange="this.form.submit()">
-                <option value="">Todos los departamentos</option>
-                <?php
-                while ($row_depto = $departamentos->fetch_assoc()) {
-                    $selected = ($departamento_id == $row_depto['idDepartamento']) ? "selected" : "";
-                    echo "<option value='" . $row_depto['idDepartamento'] . "' $selected>" . htmlspecialchars($row_depto['nombre']) . "</option>";
-                }
-                ?>
-            </select>
-        </form>
-
-        <!-- Botón Agregar Persona -->
-        <div class="d-flex justify-content-end mb-3">
-            <a href="form_persona.php" class="btn btn-add">
+    <div class="container mt-5">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="mb-0" style="font-weight: 700;">Gestión de Personas</h2>
+            <a href="form_persona.php" class="btn btn-primary">
                 <i class="bi bi-person-plus-fill me-2"></i> Agregar Persona
             </a>
         </div>
+        
+        <?php if ($message): ?>
+            <div class="alert alert-<?php echo $message_type; ?> alert-dismissible fade show" role="alert">
+                <?php echo htmlspecialchars($message); ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        <?php endif; ?>
 
-        <!-- Mostrar mensaje de éxito tras eliminar una persona -->
-        <?php
-        if (isset($_GET['success']) && $_GET['success'] == 'deleted') {
-            echo '<div class="alert alert-success">Persona eliminada correctamente.</div>';
-        }
-        ?>
-
-        <!-- Tabla de Personas -->
-        <div class="table-responsive">
-            <table class="table table-bordered table-hover">
-                <thead>
-                    <tr>
-                        <th>Nombre</th>
-                        <th>Apellidos</th>
-                        <th>Cédula</th>
-                        <th>Fecha de Nacimiento</th>
-                        <th>Género</th>
-                        <th>Teléfono</th>
-                        <th>Departamento</th>
-                        <th>Estado</th>
-                        <th>Acciones</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php
-                    $query = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula, p.Fecha_nac, 
-                                    g.Descripcion_genero AS Genero, t.Numero_de_Telefono AS Telefono, dep.nombre AS Departamento, 
-                                    c.activo AS Estado
-                            FROM persona p
-                            LEFT JOIN genero_cat g ON p.Genero_cat_idGenero_cat = g.idGenero_cat
-                            LEFT JOIN telefono t ON p.Telefono_id_Telefono = t.id_Telefono
-                            LEFT JOIN departamento dep ON p.Departamento_idDepartamento = dep.idDepartamento
-                            LEFT JOIN colaborador c ON p.idPersona = c.Persona_idPersona";
-
-                    if ($departamento_id != '') {
-                        $query .= " WHERE p.Departamento_idDepartamento = $departamento_id";
-                    }
-
-                    $result = $conn->query($query);
-
-                    if ($result && $result->num_rows > 0) {
-                        while ($row = $result->fetch_assoc()) {
-                            // Formatear la fecha de nacimiento
-                            $fecha_nac = date("d/m/Y", strtotime($row['Fecha_nac']));
-
-                            // Determinar el estado
-                            $estado = ($row['Estado'] == 1) ? 'Activo' : 'Inactivo';
-
-                            echo "<tr>";
-                            echo "<td>" . htmlspecialchars($row['Nombre']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['Apellido1'] . " " . $row['Apellido2']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['Cedula']) . "</td>";
-                            echo "<td>" . htmlspecialchars($fecha_nac) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['Genero']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['Telefono']) . "</td>";
-                            echo "<td>" . htmlspecialchars($row['Departamento']) . "</td>";
-                            echo "<td>" . htmlspecialchars($estado) . "</td>";
-                            echo "<td>
-                                    <a href='form_persona.php?id=" . $row['idPersona'] . "' class='btn btn-edit btn-action me-2' title='Editar'>
-                                        <i class='bi bi-pencil-square'></i>
-                                    </a>
-                                    <a href='personas.php?delete_id=" . $row['idPersona'] . "' class='btn btn-delete btn-action me-2' title='Eliminar' onclick=\"return confirm('¿Estás seguro de que deseas eliminar esta persona?')\">
-                                        <i class='bi bi-trash'></i>
-                                    </a>
-                                    <a href='personas.php?toggle_id=" . $row['idPersona'] . "' class='btn " . ($row['Estado'] == 1 ? "btn-warning" : "btn-success") . " btn-action' title='" . ($row['Estado'] == 1 ? "Desactivar" : "Activar") . "'>
-                                        <i class='bi " . ($row['Estado'] == 1 ? "bi-toggle-off" : "bi-toggle-on") . "'></i>
-                                    </a>
-                                  </td>";
-                            echo "</tr>";
-                        }
-                    } else {
-                        echo "<tr><td colspan='9' class='text-center'>No hay personas registradas.</td></tr>";
-                    }
-                    ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Modal de Confirmación de Eliminación (Opcional, si prefieres usar un modal en lugar de confirmación estándar) -->
-  
-    
-    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <form method="post" action="personas.php">
-                    <div class="modal-header">
-                        <h5 class="modal-title" id="deleteModalLabel">Confirmar Eliminación</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        <div class="card card-main">
+            <div class="card-body">
+                <!-- Filtros y Búsqueda -->
+                <form method="GET" class="row g-3 mb-4">
+                    <div class="col-md-5">
+                        <input type="text" name="search" class="form-control" placeholder="Buscar por nombre, apellido o cédula..." value="<?php echo htmlspecialchars($search_term); ?>">
                     </div>
-                    <div class="modal-body">
-                        <p>¿Estás seguro de que deseas eliminar esta persona?</p>
-                        <input type="hidden" name="user_id" id="delete_user_id" value="">
+                    <div class="col-md-5">
+                        <select name="departamento_id" class="form-select">
+                            <option value="">Filtrar por departamento...</option>
+                            <?php while ($row_depto = $departamentos->fetch_assoc()): ?>
+                                <option value="<?php echo $row_depto['idDepartamento']; ?>" <?php if ($departamento_id_filter == $row_depto['idDepartamento']) echo 'selected'; ?>>
+                                    <?php echo htmlspecialchars($row_depto['nombre']); ?>
+                                </option>
+                            <?php endwhile; ?>
+                        </select>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" name="delete_user" class="btn btn-danger">Eliminar</button>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-secondary w-100">Filtrar</button>
                     </div>
                 </form>
+
+                <!-- Tabla de Personas -->
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle">
+                        <thead>
+                            <tr>
+                                <th>Nombre Completo</th>
+                                <th>Cédula</th>
+                                <th>Departamento</th>
+                                <th class="text-center">Estado</th>
+                                <th class="text-center">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if ($result_personas->num_rows > 0): ?>
+                                <?php while ($row = $result_personas->fetch_assoc()): ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars($row['Nombre'] . " " . $row['Apellido1'] . " " . $row['Apellido2']); ?></td>
+                                        <td><?php echo htmlspecialchars($row['Cedula']); ?></td>
+                                        <td><?php echo htmlspecialchars($row['Departamento'] ?? 'No asignado'); ?></td>
+                                        <td class="text-center">
+                                            <?php if ($row['Estado'] == 1): ?>
+                                                <span class="badge rounded-pill bg-success status-badge">Activo</span>
+                                            <?php else: ?>
+                                                <span class="badge rounded-pill bg-danger status-badge">Inactivo</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="text-center">
+                                            <a href="form_persona.php?id=<?php echo $row['idPersona']; ?>" class="btn btn-outline-primary btn-sm btn-action" title="Editar">
+                                                <i class="bi bi-pencil-square"></i>
+                                            </a>
+                                            <button type="button" class="btn btn-outline-danger btn-sm btn-action" title="Eliminar" onclick="confirmDelete(<?php echo $row['idPersona']; ?>)">
+                                                <i class="bi bi-trash"></i>
+                                            </button>
+                                            <a href="personas.php?toggle_id=<?php echo $row['idPersona']; ?>" class="btn btn-outline-secondary btn-sm btn-action" title="<?php echo $row['Estado'] ? 'Desactivar' : 'Activar'; ?>">
+                                                <i class="bi <?php echo $row['Estado'] ? 'bi-toggle-on' : 'bi-toggle-off'; ?>"></i>
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endwhile; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted">No se encontraron personas con los filtros seleccionados.</td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
 
-
-    <!-- Bootstrap JS Bundle -->
+    <!-- Modal de Confirmación de Eliminación -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteModalLabel">Confirmar Eliminación</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body">
+                    <p>¿Estás seguro de que deseas eliminar a esta persona? Esta acción no se puede deshacer y eliminará todos los registros asociados.</p>
+                </div>
+                <div class="modal-footer">
+                    <form id="deleteForm" method="POST" action="personas.php">
+                        <input type="hidden" name="delete_id" id="delete_id_input">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-danger">Eliminar</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
-    <!-- Script para pasar el ID de la persona al modal de eliminación (si usas el modal) -->
-    
     <script>
-        const deleteModal = document.getElementById('deleteModal');
-        deleteModal.addEventListener('show.bs.modal', function (event) {
-            const button = event.relatedTarget;
-            const idPersona = button.getAttribute('data-id');
-            const modalBodyInput = deleteModal.querySelector('#delete_user_id');
-            modalBodyInput.value = idPersona;
-        });
+        function confirmDelete(id) {
+            document.getElementById('delete_id_input').value = id;
+            var deleteModal = new bootstrap.Modal(document.getElementById('deleteModal'));
+            deleteModal.show();
+        }
     </script>
-    
 </body>
-
 </html>
