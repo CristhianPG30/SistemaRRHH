@@ -3,21 +3,19 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-// Redirigir a login si no hay sesión activa
 if (!isset($_SESSION['username'])) {
     header("Location: login.php");
     exit;
 }
 
 $username = $_SESSION['username'];
-$rol = $_SESSION['rol'] ?? 0; // Asignar 0 si el rol no está definido
+$rol = $_SESSION['rol'] ?? 0;
 
-// Función para determinar si un enlace del menú está activo
 function isActive($pageNames) {
+    $currentPage = basename($_SERVER['PHP_SELF']);
     if (!is_array($pageNames)) {
         $pageNames = [$pageNames];
     }
-    $currentPage = basename($_SERVER['PHP_SELF']);
     return in_array($currentPage, $pageNames) ? 'active' : '';
 }
 ?>
@@ -28,154 +26,227 @@ function isActive($pageNames) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistema RRHH - Edginton S.A.</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
         :root {
-            --primary-color: #4e73df;
-            --secondary-color: #1cc88a;
-            --light-color: #f8f9fc;
-            --dark-color: #5a5c69;
-            --header-bg: linear-gradient(90deg, #4e73df 0%, #36b9cc 100%);
-        }
-        
-        body { 
-            font-family: 'Poppins', sans-serif; 
-            background-color: var(--light-color);
+            --sidebar-width: 280px;
+            --sidebar-bg: #191c24;
+            --sidebar-glass-blur: 10px;
+            --link-color: #aeb1be;
+            --link-hover-color: #ffffff;
+            --link-active-color: #ffffff;
+            /* CAMBIO DE COLOR: De fucsia a azul neón */
+            --accent-color: #00bfff;
+            --topbar-height: 70px;
         }
 
-        .navbar-custom {
-            background: var(--header-bg);
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            padding: 0.5rem 1.5rem;
+        body {
+            font-family: 'Poppins', sans-serif;
+            background-color: #f1f3f6;
+            padding-left: var(--sidebar-width);
         }
-        .navbar-brand img {
-            height: 45px;
+
+        .sidebar {
+            width: var(--sidebar-width);
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(var(--sidebar-glass-blur));
+            -webkit-backdrop-filter: blur(var(--sidebar-glass-blur));
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            flex-direction: column;
+            z-index: 1100;
+            transition: transform 0.3s ease-in-out;
+        }
+        
+        .sidebar-brand {
+            padding: 1.5rem;
+            text-align: center;
+            color: #fff;
+        }
+        /* ESTILO PARA EL LOGO: Fondo blanco para que resalte */
+        .sidebar-brand .sidebar-logo {
+            max-width: 70px;
+            margin-bottom: 0.75rem;
             border-radius: 50%;
-            padding: 2px;
-            background-color: white;
+            background-color: #fff; /* Fondo blanco */
+            padding: 5px; /* Pequeño padding interno */
             transition: transform 0.3s ease;
         }
-        .navbar-brand:hover img {
+        .sidebar-brand:hover .sidebar-logo {
             transform: scale(1.1);
         }
-        .navbar-brand .brand-text {
-            font-weight: 600;
-            color: #fff;
-            font-size: 1.25rem;
+        .sidebar-brand h5 {
+            font-weight: 700;
+            letter-spacing: 1px;
         }
-        .navbar-nav .nav-link {
-            color: rgba(255, 255, 255, 0.85);
+
+        .sidebar-nav {
+            padding: 1rem;
+            flex-grow: 1;
+        }
+        .sidebar .nav-link {
+            color: var(--link-color);
             font-weight: 500;
-            padding: 0.75rem 1rem;
-            border-radius: 0.5rem;
-            transition: all 0.2s ease-in-out;
+            padding: 0.9rem 1.2rem;
+            margin-bottom: 0.5rem;
+            border-radius: 0.6rem;
             display: flex;
             align-items: center;
+            transition: all 0.2s ease-in-out;
+            border-left: 4px solid transparent;
         }
-        .navbar-nav .nav-link:hover {
-            background-color: rgba(255, 255, 255, 0.1);
-            color: #fff;
+        .sidebar .nav-link i {
+            font-size: 1.3rem;
+            margin-right: 1rem;
+            width: 25px;
+            transition: all 0.2s ease-in-out;
         }
-        .navbar-nav .nav-link.active {
-            background-color: rgba(0, 0, 0, 0.2);
-            color: #fff;
+        .sidebar .nav-link:hover {
+            color: var(--link-hover-color);
+        }
+        .sidebar .nav-link:hover i {
+            color: var(--accent-color);
+            text-shadow: 0 0 10px var(--accent-color);
+        }
+        .sidebar .nav-link.active {
+            color: var(--link-hover-color);
             font-weight: 600;
+            background: linear-gradient(90deg, rgba(0, 191, 255, 0.15), rgba(0, 191, 255, 0.01));
+            border-left-color: var(--accent-color);
         }
-        .navbar-nav .nav-link i {
-            margin-right: 0.5rem;
+        .sidebar .nav-link.active i {
+            color: var(--accent-color);
         }
-        .dropdown-menu {
-            border-radius: 0.75rem;
-            border: none;
-            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.15);
+
+        .sidebar .nav-link[data-bs-toggle="collapse"] .bi-chevron-down {
+            transition: transform 0.3s ease;
         }
-        .dropdown-item {
-            font-weight: 500;
-            color: var(--dark-color);
-            transition: all 0.2s ease;
+        .sidebar .nav-link[data-bs-toggle="collapse"][aria-expanded="true"] .bi-chevron-down {
+            transform: rotate(180deg);
         }
-        .dropdown-item.active, .dropdown-item:active {
-            background-color: var(--primary-color);
+        .sidebar .collapse .nav-link, .sidebar .collapsing .nav-link {
+            padding-left: 3.5rem;
+            font-size: 0.95em;
+            background: rgba(0,0,0,0.2);
+            border-left: none;
+        }
+        
+        .sidebar-footer {
+            padding: 1rem;
+            margin-top: auto;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .user-profile .dropdown-toggle::after {
+            display: none;
+        }
+        .user-profile .user-name {
+            font-weight: 600;
             color: #fff;
         }
-        .dropdown-item i {
-            margin-right: 0.75rem;
-            width: 20px;
+        .user-profile .user-role {
+            font-size: 0.8em;
+            color: var(--link-color);
+        }
+        .sidebar-footer .dropdown-menu {
+            background-color: #2a2e3f;
+            width: calc(var(--sidebar-width) - 2rem);
+        }
+        .sidebar-footer .dropdown-item {
+            color: var(--link-color);
+        }
+        .sidebar-footer .dropdown-item:hover {
+            background-color: var(--accent-color);
+            color: #fff;
+        }
+        
+        .main-content-wrapper {
+            margin-left: var(--sidebar-width);
+            transition: margin-left 0.3s ease-in-out;
+        }
+        
+        .topbar-toggler {
+            color: #555;
+        }
+
+        @media (max-width: 992px) {
+            body { padding-left: 0; }
+            .sidebar { transform: translateX(calc(-1 * var(--sidebar-width))); }
+            .sidebar.active { transform: translateX(0); }
+            .main-content-wrapper { margin-left: 0; }
         }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark navbar-custom">
-    <div class="container-fluid">
-        <a class="navbar-brand d-flex align-items-center" href="#">
-            <img src="img/edginton.png" alt="Logo Edginton" class="me-2">
-            <span class="brand-text">Edginton S.A.</span>
+<div class="sidebar">
+    <a class="sidebar-brand text-decoration-none" href="#">
+        <img src="img/edginton.png" alt="Logo" class="sidebar-logo">
+        <h5>Edginton S.A.</h5>
+    </a>
+    
+    <ul class="nav flex-column sidebar-nav">
+        <?php if ($rol == 1): // --- MENÚ ADMINISTRADOR --- ?>
+            <li class="nav-item">
+                <a class="nav-link <?= isActive(['index_administrador.php']); ?>" href="index_administrador.php"><i class="bi bi-grid-1x2-fill"></i>Dashboard</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link collapsed" href="#gestion-submenu" data-bs-toggle="collapse" role="button">
+                    <i class="bi bi-people-fill"></i>Gestión <i class="bi bi-chevron-down ms-auto"></i>
+                </a>
+                <div class="collapse <?= isActive(['personas.php', 'form_persona.php', 'usuarios.php', 'form_usuario.php']) ? 'show' : ''; ?>" id="gestion-submenu">
+                    <a class="nav-link <?= isActive(['personas.php', 'form_persona.php']); ?>" href="personas.php">Personal</a>
+                    <a class="nav-link <?= isActive(['usuarios.php', 'form_usuario.php']); ?>" href="usuarios.php">Usuarios</a>
+                </div>
+            </li>
+             <li class="nav-item">
+                <a class="nav-link collapsed" href="#procesos-submenu" data-bs-toggle="collapse" role="button">
+                    <i class="bi bi-gear-fill"></i>Procesos RRHH <i class="bi bi-chevron-down ms-auto"></i>
+                </a>
+                <div class="collapse <?= isActive(['nóminas.php', 'permisos.php', 'horasextra.php']) ? 'show' : ''; ?>" id="procesos-submenu">
+                    <a class="nav-link" href="nóminas.php">Generar Planilla</a>
+                    <a class="nav-link" href="permisos.php">Aprobar Permisos</a>
+                    <a class="nav-link" href="horasextra.php">Aprobar Horas Extra</a>
+                </div>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link <?= isActive('configuración.php'); ?>" href="configuración.php"><i class="bi bi-sliders"></i>Mantenimientos</a>
+            </li>
+        <?php endif; ?>
+    </ul>
+
+    <div class="sidebar-footer dropdown">
+        <a href="#" class="d-flex align-items-center text-decoration-none dropdown-toggle user-profile" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-person-circle"></i>
+            <div class="ms-3">
+                <strong class="user-name"><?= htmlspecialchars($username); ?></strong>
+                <small class="d-block user-role">
+                <?php
+                    switch($rol) {
+                        case 1: echo 'Administrador'; break;
+                        case 2: echo 'Colaborador'; break;
+                        case 3: echo 'Jefatura'; break;
+                        case 4: echo 'RRHH'; break;
+                    }
+                ?>
+                </small>
+            </div>
         </a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-        <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-
-                <?php if ($rol == 1): // --- MENÚ ADMINISTRADOR --- ?>
-                    <li class="nav-item"><a class="nav-link <?= isActive('index_administrador.php'); ?>" href="index_administrador.php"><i class="bi bi-speedometer2"></i>Dashboard</a></li>
-                    
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle <?= isActive(['personas.php', 'form_persona.php', 'ver_persona.php', 'usuarios.php', 'form_usuario.php']); ?>" href="#" data-bs-toggle="dropdown"><i class="bi bi-people-fill"></i>Gestión</a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item <?= isActive(['personas.php', 'form_persona.php', 'ver_persona.php']); ?>" href="personas.php"><i class="bi bi-person-lines-fill"></i>Personas</a></li>
-                            <li><a class="dropdown-item <?= isActive(['usuarios.php', 'form_usuario.php']); ?>" href="usuarios.php"><i class="bi bi-person-lock"></i>Usuarios</a></li>
-                        </ul>
-                    </li>
-
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle <?= isActive(['nóminas.php', 'permisos.php', 'horasextra.php']); ?>" href="#" data-bs-toggle="dropdown"><i class="bi bi-gear-fill"></i>Procesos RRHH</a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item <?= isActive('nóminas.php'); ?>" href="nóminas.php"><i class="bi bi-cash-stack"></i>Generar Planilla</a></li>
-                            <li><a class="dropdown-item <?= isActive('permisos.php'); ?>" href="permisos.php"><i class="bi bi-calendar-check"></i>Aprobar Permisos</a></li>
-                            <li><a class="dropdown-item <?= isActive('horasextra.php'); ?>" href="horasextra.php"><i class="bi bi-clock-history"></i>Aprobar Horas Extra</a></li>
-                        </ul>
-                    </li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('configuración.php'); ?>" href="configuración.php"><i class="bi bi-sliders"></i>Mantenimientos</a></li>
-                
-                <?php elseif ($rol == 2): // --- MENÚ COLABORADOR --- ?>
-                    <li class="nav-item"><a class="nav-link <?= isActive('index_colaborador.php'); ?>" href="index_colaborador.php"><i class="bi bi-house-door-fill"></i>Inicio</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('solicitud_permisos.php'); ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-plus-fill"></i>Solicitar Permiso</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('horas_extra.php'); ?>" href="horas_extra.php"><i class="bi bi-clock-fill"></i>Mis Horas Extra</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('salario.php'); ?>" href="salario.php"><i class="bi bi-wallet-fill"></i>Mi Salario</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('evaluacion.php'); ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i>Mi Evaluación</a></li>
-
-                <?php elseif ($rol == 3): // --- MENÚ JEFATURA --- ?>
-                    <li class="nav-item"><a class="nav-link <?= isActive('index_jefatura.php'); ?>" href="index_jefatura.php"><i class="bi bi-house-door-fill"></i>Inicio</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('permisos.php'); ?>" href="permisos.php"><i class="bi bi-calendar-check-fill"></i>Aprobar Permisos</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('horasextra.php'); ?>" href="horasextra.php"><i class="bi bi-clock-history"></i>Aprobar Horas Extra</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('rendimiento_equipo.php'); ?>" href="rendimiento_equipo.php"><i class="bi bi-clipboard-data-fill"></i>Evaluar Equipo</a></li>
-
-                <?php elseif ($rol == 4): // --- MENÚ RRHH --- ?>
-                    <li class="nav-item"><a class="nav-link <?= isActive('index_rrhh.php'); ?>" href="index_rrhh.php"><i class="bi bi-speedometer2"></i>Dashboard</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('nóminas.php'); ?>" href="nóminas.php"><i class="bi bi-cash-stack"></i>Planillas</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('aguinaldo.php'); ?>" href="aguinaldo.php"><i class="bi bi-gift-fill"></i>Aguinaldos</a></li>
-                    <li class="nav-item"><a class="nav-link <?= isActive('liquidación.php'); ?>" href="liquidación.php"><i class="bi bi-person-dash-fill"></i>Liquidaciones</a></li>
-                <?php endif; ?>
-            </ul>
-            
-            <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
-                <li class="nav-item dropdown">
-                    <a class="nav-link dropdown-toggle" href="#" id="navbarUserDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
-                        <i class="bi bi-person-circle"></i>
-                        <span><?= htmlspecialchars($username); ?></span>
-                    </a>
-                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarUserDropdown">
-                        <li><a class="dropdown-item" href="logout.php"><i class="bi bi-box-arrow-right"></i>Cerrar Sesión</a></li>
-                    </ul>
-                </li>
-            </ul>
-        </div>
+        <ul class="dropdown-menu dropdown-menu-dark">
+            <li><a class="dropdown-item" href="logout.php"><i class="bi bi-box-arrow-right me-2"></i>Cerrar Sesión</a></li>
+        </ul>
     </div>
-</nav>
+</div>
 
-</body>
-</html>
+<div class="main-content-wrapper">
+    <nav class="topbar sticky-top d-lg-none bg-light shadow-sm">
+        <button class="btn topbar-toggler" type="button" onclick="toggleSidebar()">
+            <i class="bi bi-list fs-2"></i>
+        </button>
+    </nav>
+    <main class="content-area p-md-4 p-3">

@@ -1,18 +1,20 @@
 <?php
-// Iniciar sesión de manera segura
-session_start([
-    'cookie_httponly' => true,
-    'cookie_secure' => true, // Asegúrate de tener HTTPS configurado en producción
-    'cookie_samesite' => 'Strict'
-]);
-
-include 'db.php';
+// Iniciar sesión de manera segura al principio de todo
+if (session_status() === PHP_SESSION_NONE) {
+    session_start([
+        'cookie_httponly' => true,
+        'cookie_secure' => true,
+        'cookie_samesite' => 'Strict'
+    ]);
+}
 
 // 1. SEGURIDAD Y PERMISOS
 if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
     header('Location: login.php');
     exit;
 }
+
+include 'db.php';
 
 // 2. GESTIÓN DE NOTIFICACIONES (MENSAJES FLASH)
 $flash_message = '';
@@ -74,7 +76,7 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
 }
 
 // 5. LÓGICA PARA PROCESAR EL FORMULARIO
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     session_regenerate_id(true);
     $idPersona = isset($_POST['idPersona']) ? intval($_POST['idPersona']) : 0;
     $is_edit_mode = ($idPersona > 0);
@@ -164,7 +166,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     exit;
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -270,102 +271,115 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     </div>
 
     <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const stepper = document.querySelector('.form-stepper');
-        const formSteps = document.querySelectorAll('.form-step');
-        let currentStep = 1;
+        // Tu script de JavaScript para el stepper y los selects de ubicación
+        // No necesita cambios, pero lo incluyo para que el archivo sea completo.
+        document.addEventListener('DOMContentLoaded', function () {
+            const stepper = document.querySelector('.form-stepper');
+            const formSteps = document.querySelectorAll('.form-step');
+            let currentStep = 1;
 
-        function goToStep(stepNumber) {
-            currentStep = stepNumber;
-            formSteps.forEach(step => step.classList.remove('active'));
-            document.querySelector(`[data-step-content="${currentStep}"]`).classList.add('active');
+            function goToStep(stepNumber) {
+                currentStep = stepNumber;
+                formSteps.forEach(step => step.classList.remove('active'));
+                document.querySelector(`[data-step-content="${currentStep}"]`).classList.add('active');
 
-            stepper.querySelectorAll('.step').forEach((step, index) => {
-                step.classList.remove('active', 'completed');
-                if(index + 1 < currentStep) step.classList.add('completed');
-                if(index + 1 === currentStep) step.classList.add('active');
-            });
-        }
-
-        function validateStep(stepIndex) {
-            const currentFormStep = document.querySelector(`[data-step-content="${stepIndex}"]`);
-            let isValid = true;
-            currentFormStep.querySelectorAll('[required]').forEach(input => {
-                input.classList.remove('is-invalid');
-                if (!input.value.trim()) {
-                    input.classList.add('is-invalid');
-                    isValid = false;
-                }
-            });
-            return isValid;
-        }
-
-        document.querySelectorAll('[data-nav]').forEach(button => {
-            button.addEventListener('click', () => {
-                const direction = button.dataset.nav === 'next' ? 1 : -1;
-                if (direction === 1 && !validateStep(currentStep)) return;
-                const nextStep = currentStep + direction;
-                if (nextStep > 0 && nextStep <= formSteps.length) {
-                    goToStep(nextStep);
-                }
-            });
-        });
-        
-        stepper.querySelectorAll('.step').forEach(step_el => {
-            step_el.addEventListener('click', () => {
-                const targetStep = parseInt(step_el.dataset.stepTarget);
-                // Permite navegar a pasos anteriores si ya han sido completados
-                if(targetStep < currentStep){
-                    goToStep(targetStep);
-                }
-            });
-        });
-
-        const provinciaSelect = document.getElementById('provincia');
-        const cantonSelect = document.getElementById('canton');
-        const distritoSelect = document.getElementById('distrito');
-        const initialData = {
-            provincia: '<?= $provincia_id ?? "" ?>',
-            canton: '<?= $canton_id ?? "" ?>',
-            distrito: '<?= $distrito_id ?? "" ?>'
-        };
-        let ubicacionesData = {};
-
-        function populateSelect(select, items, selectedId) {
-            select.innerHTML = '<option value="">Seleccione...</option>';
-            for (const id in items) {
-                select.add(new Option(items[id], id));
+                stepper.querySelectorAll('.step').forEach((step, index) => {
+                    step.classList.remove('active', 'completed');
+                    if(index + 1 < currentStep) step.classList.add('completed');
+                    if(index + 1 === currentStep) step.classList.add('active');
+                });
             }
-            select.value = selectedId;
-        }
 
-        fetch('js/ubicaciones.json')
-            .then(response => response.json())
-            .then(data => {
-                ubicacionesData = data;
-                populateSelect(provinciaSelect, data.provincias, initialData.provincia);
-                if (initialData.provincia) provinciaSelect.dispatchEvent(new Event('change'));
+            function validateStep(stepIndex) {
+                const currentFormStep = document.querySelector(`[data-step-content="${stepIndex}"]`);
+                let isValid = true;
+                currentFormStep.querySelectorAll('[required]').forEach(input => {
+                    input.classList.remove('is-invalid');
+                    if (!input.value.trim()) {
+                        input.classList.add('is-invalid');
+                        isValid = false;
+                    }
+                });
+                return isValid;
+            }
+
+            document.querySelectorAll('[data-nav]').forEach(button => {
+                button.addEventListener('click', () => {
+                    const direction = button.dataset.nav === 'next' ? 1 : -1;
+                    if (direction === 1 && !validateStep(currentStep)) return;
+                    const nextStep = currentStep + direction;
+                    if (nextStep > 0 && nextStep <= formSteps.length) {
+                        goToStep(nextStep);
+                    }
+                });
+            });
+            
+            stepper.querySelectorAll('.step').forEach(step_el => {
+                step_el.addEventListener('click', () => {
+                    const targetStep = parseInt(step_el.dataset.stepTarget);
+                    if(targetStep < currentStep){
+                        goToStep(targetStep);
+                    }
+                });
             });
 
-        provinciaSelect.addEventListener('change', () => {
-            const cantones = ubicacionesData.cantones[provinciaSelect.value] || {};
-            populateSelect(cantonSelect, cantones, initialData.canton);
-            cantonSelect.dispatchEvent(new Event('change'));
-        });
+            const provinciaSelect = document.getElementById('provincia');
+            const cantonSelect = document.getElementById('canton');
+            const distritoSelect = document.getElementById('distrito');
+            const initialData = {
+                provincia: '<?= $provincia_id ?? "" ?>',
+                canton: '<?= $canton_id ?? "" ?>',
+                distrito: '<?= $distrito_id ?? "" ?>'
+            };
+            let ubicacionesData = {};
 
-        cantonSelect.addEventListener('change', () => {
-            const distritos = ubicacionesData.distritos[provinciaSelect.value]?.[cantonSelect.value] || {};
-            populateSelect(distritoSelect, distritos, initialData.distrito);
-        });
-
-        document.getElementById('personaForm').addEventListener('submit', event => {
-            if (!validateStep(1) || !validateStep(2) || !validateStep(3)) {
-                event.preventDefault();
-                event.stopPropagation();
-                alert('Por favor, revise los campos marcados en rojo en todos los pasos.');
+            function populateSelect(select, items, selectedId) {
+                select.innerHTML = '<option value="">Seleccione...</option>';
+                for (const id in items) {
+                    select.add(new Option(items[id], id));
+                }
+                if (selectedId) {
+                    select.value = selectedId;
+                }
             }
+
+            fetch('js/ubicaciones.json')
+                .then(response => response.json())
+                .then(data => {
+                    ubicacionesData = data;
+                    populateSelect(provinciaSelect, data.provincias, initialData.provincia);
+                    if (initialData.provincia) {
+                        provinciaSelect.dispatchEvent(new Event('change'));
+                    }
+                });
+
+            provinciaSelect.addEventListener('change', () => {
+                const cantones = ubicacionesData.cantones[provinciaSelect.value] || {};
+                populateSelect(cantonSelect, cantones, initialData.canton);
+                 if (initialData.canton) {
+                    cantonSelect.dispatchEvent(new Event('change'));
+                    initialData.canton = null; // Evitar que se vuelva a seleccionar
+                }
+            });
+
+            cantonSelect.addEventListener('change', () => {
+                const distritos = ubicacionesData.distritos[provinciaSelect.value]?.[cantonSelect.value] || {};
+                populateSelect(distritoSelect, distritos, initialData.distrito);
+                if (initialData.distrito) {
+                    initialData.distrito = null; // Evitar que se vuelva a seleccionar
+                }
+            });
+
+            document.getElementById('personaForm').addEventListener('submit', event => {
+                if (!validateStep(1) || !validateStep(2) || !validateStep(3)) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    alert('Por favor, revise los campos marcados en rojo en todos los pasos.');
+                }
+            });
         });
-    });
     </script>
+
+    <?php include 'footer.php'; ?>
 </body>
 </html>

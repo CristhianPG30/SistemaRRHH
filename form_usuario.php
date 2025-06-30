@@ -1,5 +1,9 @@
 <?php
-session_start();
+// Iniciar sesión de manera segura al principio de todo
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 include 'db.php';
 
 if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
@@ -44,7 +48,6 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
         $usuario_a_editar['id_persona_fk'] = $data['id_persona_fk'];
         $usuario_a_editar['persona_nombre'] = $data['persona_nombre'];
     } else {
-        // Redirigir si el usuario no existe
         $_SESSION['flash_message'] = ['type' => 'warning', 'message' => 'Usuario no encontrado.'];
         header("Location: usuarios.php");
         exit;
@@ -53,9 +56,8 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
 }
 
 // --- LÓGICA PARA PROCESAR EL FORMULARIO (GUARDAR DATOS) ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // (Esta sección no cambia, ya estaba bien)
-    if (!isset($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) { die('Error de validación de seguridad.'); }
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['csrf_token'])) {
+    if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) { die('Error de validación de seguridad.'); }
     $idUsuario_post = intval($_POST['idUsuario']);
     $username_post = trim($_POST['username']);
     $password_post = trim($_POST['password']);
@@ -147,5 +149,6 @@ $personas_sin_usuario = $conn->query("SELECT idPersona, CONCAT(Nombre, ' ', Apel
             icon.classList.toggle('bi-eye-slash');
         });
     </script>
+    <?php include 'footer.php'; ?>
 </body>
 </html>
