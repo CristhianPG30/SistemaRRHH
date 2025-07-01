@@ -11,12 +11,15 @@ if (!isset($_SESSION['username'])) {
 $username = $_SESSION['username'];
 $rol = $_SESSION['rol'] ?? 0;
 
-function isActive($pageNames) {
-    $currentPage = basename($_SERVER['PHP_SELF']);
-    if (!is_array($pageNames)) {
-        $pageNames = [$pageNames];
+// ✅ CORRECCIÓN: Se envuelve la función en un "if" para evitar que se declare dos veces.
+if (!function_exists('isActive')) {
+    function isActive($pageNames) {
+        $currentPage = basename($_SERVER['PHP_SELF']);
+        if (!is_array($pageNames)) {
+            $pageNames = [$pageNames];
+        }
+        return in_array($currentPage, $pageNames) ? 'active' : '';
     }
-    return in_array($currentPage, $pageNames) ? 'active' : '';
 }
 ?>
 <!DOCTYPE html>
@@ -33,18 +36,14 @@ function isActive($pageNames) {
         :root {
             --sidebar-width: 280px;
             --sidebar-bg: #191c24;
-            --sidebar-glass-blur: 10px;
             --link-color: #aeb1be;
             --link-hover-color: #ffffff;
-            --link-active-color: #ffffff;
-            /* CAMBIO DE COLOR: De fucsia a azul neón */
             --accent-color: #00bfff;
-            --topbar-height: 70px;
         }
 
         body {
             font-family: 'Poppins', sans-serif;
-            background-color: #f1f3f6;
+            background-color: #f4f7fc;
             padding-left: var(--sidebar-width);
         }
 
@@ -55,9 +54,6 @@ function isActive($pageNames) {
             top: 0;
             left: 0;
             background: var(--sidebar-bg);
-            backdrop-filter: blur(var(--sidebar-glass-blur));
-            -webkit-backdrop-filter: blur(var(--sidebar-glass-blur));
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
             display: flex;
             flex-direction: column;
             z-index: 1100;
@@ -69,13 +65,13 @@ function isActive($pageNames) {
             text-align: center;
             color: #fff;
         }
-        /* ESTILO PARA EL LOGO: Fondo blanco para que resalte */
+        
         .sidebar-brand .sidebar-logo {
             max-width: 70px;
             margin-bottom: 0.75rem;
             border-radius: 50%;
-            background-color: #fff; /* Fondo blanco */
-            padding: 5px; /* Pequeño padding interno */
+            background-color: #fff;
+            padding: 5px;
             transition: transform 0.3s ease;
         }
         .sidebar-brand:hover .sidebar-logo {
@@ -112,7 +108,6 @@ function isActive($pageNames) {
         }
         .sidebar .nav-link:hover i {
             color: var(--accent-color);
-            text-shadow: 0 0 10px var(--accent-color);
         }
         .sidebar .nav-link.active {
             color: var(--link-hover-color);
@@ -123,18 +118,8 @@ function isActive($pageNames) {
         .sidebar .nav-link.active i {
             color: var(--accent-color);
         }
-
-        .sidebar .nav-link[data-bs-toggle="collapse"] .bi-chevron-down {
-            transition: transform 0.3s ease;
-        }
-        .sidebar .nav-link[data-bs-toggle="collapse"][aria-expanded="true"] .bi-chevron-down {
-            transform: rotate(180deg);
-        }
-        .sidebar .collapse .nav-link, .sidebar .collapsing .nav-link {
+        .sidebar .collapse .nav-link {
             padding-left: 3.5rem;
-            font-size: 0.95em;
-            background: rgba(0,0,0,0.2);
-            border-left: none;
         }
         
         .sidebar-footer {
@@ -142,43 +127,20 @@ function isActive($pageNames) {
             margin-top: auto;
             border-top: 1px solid rgba(255, 255, 255, 0.1);
         }
-        .user-profile .dropdown-toggle::after {
-            display: none;
-        }
-        .user-profile .user-name {
-            font-weight: 600;
-            color: #fff;
-        }
-        .user-profile .user-role {
-            font-size: 0.8em;
-            color: var(--link-color);
-        }
-        .sidebar-footer .dropdown-menu {
-            background-color: #2a2e3f;
-            width: calc(var(--sidebar-width) - 2rem);
-        }
-        .sidebar-footer .dropdown-item {
-            color: var(--link-color);
-        }
-        .sidebar-footer .dropdown-item:hover {
-            background-color: var(--accent-color);
-            color: #fff;
-        }
+        .user-profile .dropdown-toggle::after { display: none; }
+        .user-profile .user-name { font-weight: 600; color: #fff; }
+        .user-profile .user-role { font-size: 0.8em; color: var(--link-color); }
         
         .main-content-wrapper {
-            margin-left: var(--sidebar-width);
+            padding-left: var(--sidebar-width);
             transition: margin-left 0.3s ease-in-out;
         }
         
-        .topbar-toggler {
-            color: #555;
-        }
-
         @media (max-width: 992px) {
             body { padding-left: 0; }
             .sidebar { transform: translateX(calc(-1 * var(--sidebar-width))); }
             .sidebar.active { transform: translateX(0); }
-            .main-content-wrapper { margin-left: 0; }
+            .main-content-wrapper { padding-left: 0; }
         }
     </style>
 </head>
@@ -205,36 +167,47 @@ function isActive($pageNames) {
                 </div>
             </li>
              <li class="nav-item">
-                <a class="nav-link collapsed" href="#procesos-submenu" data-bs-toggle="collapse" role="button">
-                    <i class="bi bi-gear-fill"></i>Procesos RRHH <i class="bi bi-chevron-down ms-auto"></i>
-                </a>
-                <div class="collapse <?= isActive(['nóminas.php', 'permisos.php', 'horasextra.php']) ? 'show' : ''; ?>" id="procesos-submenu">
-                    <a class="nav-link" href="nóminas.php">Generar Planilla</a>
-                    <a class="nav-link" href="permisos.php">Aprobar Permisos</a>
-                    <a class="nav-link" href="horasextra.php">Aprobar Horas Extra</a>
-                </div>
+                <a class="nav-link" href="nóminas.php"><i class="bi bi-cash-stack"></i>Generar Planilla</a>
             </li>
             <li class="nav-item">
-                <a class="nav-link <?= isActive('configuración.php'); ?>" href="configuración.php"><i class="bi bi-sliders"></i>Mantenimientos</a>
+                <a class="nav-link" href="configuración.php"><i class="bi bi-sliders"></i>Mantenimientos</a>
+            </li>
+        <?php elseif ($rol == 2): // --- MENÚ COLABORADOR --- ?>
+            <li class="nav-item">
+                <a class="nav-link <?= isActive(['index_colaborador.php']); ?>" href="index_colaborador.php"><i class="bi bi-house-door-fill"></i>Inicio</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link <?= isActive(['solicitud_permisos.php']); ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-check-fill"></i>Permisos y Vacaciones</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link <?= isActive(['horas_extra.php']); ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i>Horas Extra</a>
+            </li>
+             <li class="nav-item">
+                <a class="nav-link <?= isActive(['evaluacion.php']); ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i>Mis Evaluaciones</a>
+            </li>
+             <li class="nav-item">
+                <a class="nav-link <?= isActive(['salario.php']); ?>" href="salario.php"><i class="bi bi-cash-coin"></i>Mi Salario</a>
             </li>
         <?php endif; ?>
     </ul>
 
     <div class="sidebar-footer dropdown">
         <a href="#" class="d-flex align-items-center text-decoration-none dropdown-toggle user-profile" data-bs-toggle="dropdown" aria-expanded="false">
-            <i class="bi bi-person-circle"></i>
-            <div class="ms-3">
-                <strong class="user-name"><?= htmlspecialchars($username); ?></strong>
-                <small class="d-block user-role">
-                <?php
-                    switch($rol) {
-                        case 1: echo 'Administrador'; break;
-                        case 2: echo 'Colaborador'; break;
-                        case 3: echo 'Jefatura'; break;
-                        case 4: echo 'RRHH'; break;
-                    }
-                ?>
-                </small>
+            <div class="d-flex align-items-center">
+                 <i class="bi bi-person-circle fs-2 me-2"></i>
+                <div>
+                    <strong class="user-name"><?= htmlspecialchars($username); ?></strong>
+                    <small class="d-block user-role">
+                    <?php
+                        switch($rol) {
+                            case 1: echo 'Administrador'; break;
+                            case 2: echo 'Colaborador'; break;
+                            case 3: echo 'Jefatura'; break;
+                            case 4: echo 'RRHH'; break;
+                        }
+                    ?>
+                    </small>
+                </div>
             </div>
         </a>
         <ul class="dropdown-menu dropdown-menu-dark">
@@ -244,9 +217,3 @@ function isActive($pageNames) {
 </div>
 
 <div class="main-content-wrapper">
-    <nav class="topbar sticky-top d-lg-none bg-light shadow-sm">
-        <button class="btn topbar-toggler" type="button" onclick="toggleSidebar()">
-            <i class="bi bi-list fs-2"></i>
-        </button>
-    </nav>
-    <main class="content-area p-md-4 p-3">

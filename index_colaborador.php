@@ -1,261 +1,290 @@
 <?php
 session_start();
-date_default_timezone_set('America/Costa_Rica'); // Ajusta a tu zona horaria
+date_default_timezone_set('America/Costa_Rica'); 
 
+// 1. LÓGICA DE BACKEND (Funcionalidad original conservada)
+//================================================================
 if (!isset($_SESSION['username'])) {
     header('Location: login.php');
     exit;
 }
 
-include 'db.php'; // Conexión a la base de datos
+include 'db.php'; 
 
 $username = $_SESSION['username'];
-$persona_id = $_SESSION['persona_id']; // ID de persona
+$persona_id = $_SESSION['persona_id'];
 
-// Verifica si el colaborador_id está definido y no es nulo
 if (!isset($_SESSION['colaborador_id']) || is_null($_SESSION['colaborador_id'])) {
     die("Error: ID de colaborador no definido en la sesión.");
 }
 
-$colaborador_id = $_SESSION['colaborador_id']; // ID de colaborador
+$colaborador_id = $_SESSION['colaborador_id'];
 $fechaHoy = date('Y-m-d');
+$mensaje = '';
+$tipoMensaje = '';
 
-// Variables para mensajes
-$mensajeEntrada = '';
-$mensajeSalida = '';
-$mensajeError = '';
-$mensajeHorasExtra = '';
+// Verificar estado de asistencia del día
+$sql = "SELECT * FROM control_de_asistencia WHERE Persona_idPersona = ? AND Fecha = ?";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("is", $persona_id, $fechaHoy);
+$stmt->execute();
+$result = $stmt->get_result();
+$asistencia = ($result->num_rows > 0) ? $result->fetch_assoc() : null;
+$stmt->close();
 
-// Verificar si ya ha marcado la entrada o salida hoy
-$sql = "SELECT * FROM control_de_asistencia WHERE Persona_idPersona = $persona_id AND Fecha = '$fechaHoy'";
-$result = $conn->query($sql);
-$marcoEntrada = false;
-$marcoSalida = false;
-$asistencia = null;
+$marcoEntrada = ($asistencia && $asistencia['Entrada'] != NULL);
+$marcoSalida = ($asistencia && $asistencia['Salida'] != NULL);
 
-if ($result->num_rows > 0) {
-    $asistencia = $result->fetch_assoc();
-    if ($asistencia['Entrada'] != NULL) {
-        $marcoEntrada = true;
-    }
-    if ($asistencia['Salida'] != NULL) {
-        $marcoSalida = true;
-    }
-}
-
-// Marcar Entrada
+// Procesar Marcar Entrada
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
     $horaEntrada = date('H:i:s');
     if (!$marcoEntrada) {
-        $sqlEntrada = "INSERT INTO control_de_asistencia (Persona_idPersona, Fecha, Entrada, Abierto) VALUES ($persona_id, '$fechaHoy', '$horaEntrada', 1)";
-        if ($conn->query($sqlEntrada) === TRUE) {
-            $mensajeEntrada = "Has marcado la entrada con éxito.";
+        $sqlEntrada = "INSERT INTO control_de_asistencia (Persona_idPersona, Fecha, Entrada, Abierto) VALUES (?, ?, ?, 1)";
+        $stmtEntrada = $conn->prepare($sqlEntrada);
+        $stmtEntrada->bind_param("iss", $persona_id, $fechaHoy, $horaEntrada);
+        if ($stmtEntrada->execute()) {
+            $mensaje = "¡Entrada marcada con éxito a las $horaEntrada!";
+            $tipoMensaje = 'success';
             $marcoEntrada = true;
-            $asistencia['Entrada'] = $horaEntrada; // Actualizamos la variable $asistencia
+            if ($asistencia) {
+                $asistencia['Entrada'] = $horaEntrada;
+            } else {
+                $asistencia = ['Entrada' => $horaEntrada, 'Salida' => null];
+            }
         } else {
-            $mensajeError = "Error al marcar la entrada: " . $conn->error;
+            $mensaje = "Error al marcar la entrada.";
+            $tipoMensaje = 'danger';
         }
-    } else {
-        $mensajeError = "Ya has marcado tu entrada hoy.";
+        $stmtEntrada->close();
     }
 }
 
-// Marcar Salida
+// Procesar Marcar Salida
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
     $horaSalida = date('H:i:s');
     if ($marcoEntrada && !$marcoSalida) {
-        $sqlSalida = "UPDATE control_de_asistencia SET Salida = '$horaSalida', Abierto = 0 WHERE Persona_idPersona = $persona_id AND Fecha = '$fechaHoy'";
-        if ($conn->query($sqlSalida) === TRUE) {
-            $mensajeSalida = "Has marcado la salida con éxito.";
+        $sqlSalida = "UPDATE control_de_asistencia SET Salida = ?, Abierto = 0 WHERE Persona_idPersona = ? AND Fecha = ?";
+        $stmtSalida = $conn->prepare($sqlSalida);
+        $stmtSalida->bind_param("sis", $horaSalida, $persona_id, $fechaHoy);
+        if ($stmtSalida->execute()) {
+            $mensaje = "¡Salida marcada con éxito a las $horaSalida!";
+            $tipoMensaje = 'success';
             $marcoSalida = true;
-            $asistencia['Salida'] = $horaSalida; // Actualizamos la variable $asistencia
+            $asistencia['Salida'] = $horaSalida;
 
-            // Calcular horas trabajadas
+            // Lógica de Horas Extra
             $horaEntradaTimestamp = strtotime($asistencia['Entrada']);
             $horaSalidaTimestamp = strtotime($horaSalida);
-            $horasTrabajadas = ($horaSalidaTimestamp - $horaEntradaTimestamp) / 3600; // Convertir a horas
+            $horasTrabajadas = ($horaSalidaTimestamp - $horaEntradaTimestamp) / 3600;
 
-            // Verificar si trabajó más de 9 horas
             if ($horasTrabajadas > 9) {
                 $horasExtra = $horasTrabajadas - 9;
                 $horasCompletas = floor($horasExtra);
-                $minutosExtra = ($horasExtra - $horasCompletas) * 60;
-
-                // Aplicar la regla de redondeo
-                if ($minutosExtra >= 30) {
-                    $horasCompletas += 1; // Redondear hacia arriba
-                }
-
+                if (($horasExtra - $horasCompletas) * 60 >= 30) $horasCompletas += 1;
+                
                 if ($horasCompletas > 0) {
-                    // Registrar las horas de inicio y fin de las horas extra
                     $horaInicioExtra = date('H:i:s', strtotime('+9 hours', $horaEntradaTimestamp));
-                    $horaFinExtra = date('H:i:s', $horaSalidaTimestamp);
-
-                    // Insertar registro de horas extra en la tabla horas_extra
-                    $sqlHorasExtra = "INSERT INTO horas_extra (Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Colaborador_idColaborador, Persona_idPersona) 
-                                      VALUES ('$fechaHoy', '$horaInicioExtra', '$horaFinExtra', $horasCompletas, 'Horas extra automáticas', 'Pendiente', $colaborador_id, $persona_id)";
-                    
-                    if ($conn->query($sqlHorasExtra) === TRUE) {
-                        $mensajeHorasExtra = "Horas extra registradas: $horasCompletas horas.";
-                    } else {
-                        $mensajeError = "Error al registrar horas extra: " . $conn->error;
+                    $sqlHorasExtra = "INSERT INTO horas_extra (Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Colaborador_idColaborador, Persona_idPersona) VALUES (?, ?, ?, ?, 'Horas extra automáticas', 'Pendiente', ?, ?)";
+                    $stmtHorasExtra = $conn->prepare($sqlHorasExtra);
+                    $stmtHorasExtra->bind_param("ssdisi", $fechaHoy, $horaInicioExtra, $horaSalida, $horasCompletas, $colaborador_id, $persona_id);
+                    if ($stmtHorasExtra->execute()) {
+                        $mensaje .= " Se han registrado $horasCompletas horas extra para revisión.";
                     }
+                    $stmtHorasExtra->close();
                 }
             }
         } else {
-            $mensajeError = "Error al marcar la salida: " . $conn->error;
+            $mensaje = "Error al marcar la salida.";
+            $tipoMensaje = 'danger';
         }
-    } else {
-        $mensajeError = "Debes marcar la entrada antes de marcar la salida o ya has marcado tu salida.";
+        $stmtSalida->close();
     }
 }
-?>
 
+$conn->close();
+?>
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard Colaborador - Edginton S.A.</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard del Colaborador</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
     <style>
         body {
-            font-family: 'Roboto', sans-serif;
-            background-color: #f0f2f5;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+            font-family: 'Poppins', sans-serif;
+            background-color: #f4f7fc;
         }
-       
-        .container {
-            padding-top: 30px;
-            flex-grow: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
+
+        .main-content {
+            padding-left: 280px; /* Ancho de la barra lateral */
+            padding-top: 2rem;
+            padding-right: 2rem;
         }
-        .clock-in-out-container {
-            text-align: center;
+
+        .dashboard-header {
+            margin-bottom: 2.5rem;
+        }
+        .dashboard-header h1 {
+            font-weight: 600;
+            color: #32325d;
+        }
+        .live-clock {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #5e72e4;
+        }
+        
+        .attendance-card {
             background-color: #fff;
-            padding: 40px;
-            border-radius: 20px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            max-width: 400px;
-            width: 100%;
-        }
-        .clock-in-out-container button {
-            width: 100%;
-            padding: 15px;
-            font-size: 1.2rem;
-            border-radius: 50px;
-            margin: 10px 0;
-            transition: all 0.3s ease;
-            border: none;
-        }
-        .clock-in-btn {
-            background-color: #28a745;
-            color: white;
-        }
-        .clock-in-btn:disabled, .clock-out-btn:disabled {
-            opacity: 0.6;
-            pointer-events: none;
-        }
-        .clock-out-btn {
-            background-color: #dc3545;
-            color: white;
-        }
-        .message {
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 5px;
-            font-size: 1rem;
-        }
-        .message-success {
-            background-color: #d4edda;
-            color: #155724;
-        }
-        .message-error {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        .message-info {
-            background-color: #cce5ff;
-            color: #004085;
-        }
-        .message-danger {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-        footer {
-            background-color: #2c3e50;
-            padding: 20px;
+            border-radius: 1rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
             text-align: center;
-            color: #ecf0f1;
+        }
+        
+        .action-button {
+            border: none;
+            border-radius: 0.75rem;
+            padding: 1.5rem 1rem;
+            font-size: 1.1rem;
+            font-weight: 500;
+            width: 100%;
+            transition: all 0.3s ease;
+        }
+        .action-button i {
+            font-size: 2.5rem;
+            display: block;
+            margin-bottom: 0.5rem;
+        }
+        .btn-clock-in { background-color: #e9fbf3; color: #2dce89; }
+        .btn-clock-in:hover:not(:disabled) { background-color: #2dce89; color: #fff; transform: translateY(-3px); }
+        .btn-clock-out { background-color: #fdecea; color: #f5365c; }
+        .btn-clock-out:hover:not(:disabled) { background-color: #f5365c; color: #fff; transform: translateY(-3px); }
+        .action-button:disabled { background-color: #e9ecef; color: #adb5bd; cursor: not-allowed; }
+        
+        .module-card {
+            background-color: #fff;
+            border-radius: 1rem;
+            padding: 1.5rem;
+            text-align: center;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: #525f7f;
+            display: block;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .module-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        .module-card .icon {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            color: #5e72e4;
+        }
+        .module-card .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        @media (max-width: 992px) {
+            .main-content {
+                padding-left: 2rem;
+            }
         }
     </style>
 </head>
-
 <body>
 
 <?php include 'header.php'; ?>
 
-    <!-- Main Content -->
-    <div class="container">
-        <div class="clock-in-out-container">
-            <h1>Marcar Entrada / Salida</h1>
-
-            <!-- Mostrar mensajes -->
-            <?php if ($mensajeEntrada): ?>
-                <div class="message message-success">
-                    <?= htmlspecialchars($mensajeEntrada); ?>
-                </div>
-            <?php endif; ?>
-
-            <?php if ($mensajeSalida): ?>
-                <div class="message message-danger">
-                    <?= htmlspecialchars($mensajeSalida); ?>
-                </div>
-            <?php endif; ?>
-
-            <?php if ($mensajeHorasExtra): ?>
-                <div class="message message-info">
-                    <?= htmlspecialchars($mensajeHorasExtra); ?>
-                </div>
-            <?php endif; ?>
-
-            <?php if ($mensajeError): ?>
-                <div class="message message-error">
-                    <?= htmlspecialchars($mensajeError); ?>
-                </div>
-            <?php endif; ?>
-
-            <form method="post">
-                <button class="clock-in-btn" type="submit" name="marcar_entrada" <?php if ($marcoEntrada) echo 'disabled'; ?>>
-                    Marcar Entrada
-                </button>
-                <button class="clock-out-btn" type="submit" name="marcar_salida" <?php if (!$marcoEntrada || $marcoSalida) echo 'disabled'; ?>>
-                    Marcar Salida
-                </button>
-            </form>
-            <?php if ($marcoEntrada && isset($asistencia['Entrada'])) : ?>
-                <p>Has marcado tu entrada a las: <?php echo htmlspecialchars($asistencia['Entrada']); ?></p>
-            <?php endif; ?>
-            <?php if ($marcoSalida && isset($asistencia['Salida'])) : ?>
-                <p>Has marcado tu salida a las: <?php echo htmlspecialchars($asistencia['Salida']); ?></p>
-            <?php endif; ?>
+<div class="main-content">
+    <div class="dashboard-header">
+        <h1>Hola, <?php echo htmlspecialchars(explode(' ', $username)[0]); ?></h1>
+        <p class="text-muted">Bienvenido a tu panel de control.</p>
+    </div>
+    
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="attendance-card">
+                <h5 class="mb-4">Registro de Asistencia del Día</h5>
+                 <?php if ($mensaje): ?>
+                    <div class="alert alert-<?php echo $tipoMensaje; ?> text-center" role="alert">
+                        <?= htmlspecialchars($mensaje); ?>
+                    </div>
+                <?php endif; ?>
+                <form method="post">
+                    <div class="row g-3">
+                        <div class="col">
+                            <button class="action-button btn-clock-in" type="submit" name="marcar_entrada" <?php if ($marcoEntrada) echo 'disabled'; ?>>
+                                <i class="bi bi-box-arrow-in-right"></i>Marcar Entrada
+                            </button>
+                        </div>
+                        <div class="col">
+                            <button class="action-button btn-clock-out" type="submit" name="marcar_salida" <?php if (!$marcoEntrada || $marcoSalida) echo 'disabled'; ?>>
+                                <i class="bi bi-box-arrow-right"></i>Marcar Salida
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="col-lg-4 d-flex">
+            <div class="attendance-card w-100 justify-content-center d-flex flex-column">
+                <div id="live-clock">--:--:--</div>
+                <div id="live-date" class="text-muted small">-- de ------ de ----</div>
+            </div>
         </div>
     </div>
 
-    <!-- Footer -->
-    <footer>
-        &copy; 2024 Edginton S.A. Todos los derechos reservados.
-    </footer>
+    <h3 class="mt-5 mb-3">Accesos Rápidos</h3>
+    <div class="row g-4">
+        <div class="col-lg-3 col-md-6">
+            <a href="solicitud_permisos.php" class="module-card">
+                <div class="icon"><i class="bi bi-calendar-check-fill"></i></div>
+                <h5 class="card-title">Permisos y Vacaciones</h5>
+            </a>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <a href="horas_extra.php" class="module-card">
+                <div class="icon"><i class="bi bi-clock-history"></i></div>
+                <h5 class="card-title">Horas Extra</h5>
+            </a>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <a href="evaluacion.php" class="module-card">
+                <div class="icon"><i class="bi bi-star-fill"></i></div>
+                <h5 class="card-title">Mis Evaluaciones</h5>
+            </a>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <a href="salario.php" class="module-card">
+                <div class="icon"><i class="bi bi-cash-coin"></i></div>
+                <h5 class="card-title">Mi Salario</h5>
+            </a>
+        </div>
+    </div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const clockElement = document.getElementById('live-clock');
+        const dateElement = document.getElementById('live-date');
+
+        function updateTime() {
+            const now = new Date();
+            clockElement.textContent = now.toLocaleTimeString('es-ES');
+            const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+            dateElement.textContent = now.toLocaleDateString('es-ES', options);
+        }
+        updateTime();
+        setInterval(updateTime, 1000);
+    });
+</script>
+
 </body>
-
 </html>
-
-<?php $conn->close(); ?>
