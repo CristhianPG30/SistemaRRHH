@@ -1,195 +1,124 @@
 <?php 
 session_start();
-if (!isset($_SESSION['username']) || $_SESSION['rol'] != 2) { // Verificar que el usuario tiene rol de colaborador
+if (!isset($_SESSION['username']) || $_SESSION['rol'] != 2) {
     header('Location: login.php');
     exit;
 }
-include 'db.php'; // Conexión a la base de datos
-$username = $_SESSION['username'];
+include 'db.php';
 $colaborador_id = $_SESSION['colaborador_id'];
 ?>
 
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mi Evaluación - Edginton S.A.</title>
-    <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome para iconos -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
-    <!-- Fuente personalizada -->
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
-
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;700&display=swap" rel="stylesheet">
     <style>
-        body { 
-            font-family: 'Roboto', sans-serif; 
-            background-color: #f8f9fa; 
-        }
-        h1, h2 { 
-            color: #343a40; 
-        }
-        .navbar-custom { 
-            background-color: #2c3e50; 
-            padding: 15px 20px; 
-        }
-        .navbar-brand { 
-            display: flex; 
-            align-items: center; 
-            color: #ffffff; 
-            font-weight: bold; 
-        }
-        .navbar-brand img { 
-            height: 45px; 
-            margin-right: 10px; 
-        }
-        .container { 
-            padding-top: 30px; 
-            max-width: 900px; 
-        }
-        .average-rating { 
-            display: flex; 
-            flex-direction: column; 
-            align-items: center; 
-            justify-content: center; 
-            margin-bottom: 40px; 
-        }
-        .average-rating .stars { 
-            color: #ffc107; 
-            font-size: 2rem; 
-        }
-        .average-rating .rating-number { 
-            font-size: 3rem; 
-            font-weight: bold; 
-            color: #007bff; 
-            margin-top: 10px; 
-        }
-        .progress { 
-            height: 20px; 
-            background-color: #e9ecef; 
-            border-radius: 10px; 
-            overflow: hidden; 
-            margin-top: 20px; 
-        }
-        .progress-bar { 
-            background-color: #ffc107; 
-        }
-        .table thead { 
-            background-color: #343a40; 
-            color: #fff; 
-        }
-        .table tbody tr:hover { 
-            background-color: #f1f1f1; 
-        }
-        .comment-box { 
-            background-color: #fff; 
-            border: 1px solid #dee2e6; 
-            border-radius: 10px; 
-            padding: 20px; 
-            margin-bottom: 20px; 
-        }
-        .comment-date { 
-            font-size: 0.9rem; 
-            color: #6c757d; 
-        }
-        .comment-text { 
-            font-size: 1rem; 
-            color: #343a40; 
-            margin-top: 10px; 
-        }
+        body { background: linear-gradient(135deg, #f4faff 0%, #e3f0fd 100%) !important; font-family: 'Poppins',sans-serif; }
+        .card-evaluacion { background: #fff; border-radius: 2.2rem; box-shadow: 0 8px 32px 0 rgba(44,62,80,.10); padding: 2.2rem 2.5rem 1.7rem 2.5rem; max-width: 750px; margin: 44px auto 0; }
+        .titulo { font-weight: 900; font-size: 2.1rem; color: #185197; letter-spacing: .5px; text-align: center; display: flex; align-items: center; justify-content: center; gap: .8rem;}
+        .promedio-box { display: flex; flex-direction:column; align-items:center; margin: 2.3rem 0 2rem 0;}
+        .promedio-num { font-size: 3.2rem; font-weight: 800; color: #2c92e2;}
+        .promedio-stars { font-size: 2.2rem; color: #ffd700; margin-bottom: 10px;}
+        .promedio-label { font-size: 1.12rem; color: #1b5880; margin-top: .2rem;}
+        .progress { height: 18px; border-radius: 15px; background: #e4f0ff;}
+        .progress-bar { background: linear-gradient(90deg, #23b6ff 70%, #8de1fd 100%);}
+        .table-historial th { background: #f2faff; color: #329cd4;}
+        .badge-valor { font-size:1rem; background: #ffec9f; color:#a68b0a; border-radius:.7rem; font-weight:600; padding: .6em 1em;}
+        .comentario-chat {background: #eaf8fe; border-radius: 1rem 1rem 1rem .2rem; box-shadow: 0 1px 7px #37b1ff15; padding: .8em 1.1em; font-size: 1.08em; color: #206288; margin-bottom:.6em;}
+        .historial-titulo {font-size: 1.25rem; font-weight:700; color: #1b7bb2; margin-top: 2rem; margin-bottom:1.1rem;}
+        @media (max-width:700px){ .card-evaluacion{padding:1rem;} .titulo{font-size:1.15rem;} .table-historial td,.table-historial th{font-size:.97rem;} }
     </style>
 </head>
-
 <body>
-
 <?php include 'header.php'; ?>
-
-<!-- Main Content -->
-<div class="container">
-    <h1 class="text-center mb-5">Mi Evaluación General</h1>
+<div class="card-evaluacion animate__animated animate__fadeInDown">
+    <div class="titulo mb-3">
+        <i class="bi bi-star-fill"></i> Mi Evaluación General
+    </div>
 
     <?php
-    // Consulta para obtener el promedio de calificación y el último comentario del colaborador
-    $sql_promedio = "SELECT ROUND(AVG(Calificacion), 1) AS promedio_calificacion 
-                     FROM evaluaciones 
-                     WHERE Colaborador_idColaborador = $colaborador_id";
-    $result_promedio = $conn->query($sql_promedio);
-    $promedio = $result_promedio->fetch_assoc()['promedio_calificacion'] ?? 0;
-
-    // Mostrar el promedio de calificación en estrellas y número
-    echo "<div class='average-rating'>";
-    echo "<div class='rating-number'>$promedio</div>";
-    echo "<div class='stars'>";
-    for ($i = 1; $i <= 5; $i++) {
-        echo $i <= round($promedio) ? "<i class='fas fa-star'></i>" : "<i class='far fa-star'></i>";
-    }
-    echo "</div>";
-    // Barra de progreso para mostrar el porcentaje
-    $porcentaje = ($promedio / 5) * 100;
-    echo "<div class='progress w-50'>";
-    echo "<div class='progress-bar' role='progressbar' style='width: $porcentaje%;' aria-valuenow='$promedio' aria-valuemin='0' aria-valuemax='5'></div>";
-    echo "</div>";
-    echo "</div>";
+    // 1. Promedio
+    $sql_promedio = "SELECT ROUND(AVG(Calificacion),1) as promedio FROM evaluaciones WHERE Colaborador_idColaborador = ?";
+    $stmt = $conn->prepare($sql_promedio);
+    $stmt->bind_param("i", $colaborador_id);
+    $stmt->execute();
+    $stmt->bind_result($promedio);
+    $stmt->fetch();
+    $stmt->close();
+    $promedio = $promedio ?: 0;
     ?>
+    <div class="promedio-box">
+        <div class="promedio-num animate__animated animate__fadeInDown"><?= $promedio ?></div>
+        <div class="promedio-stars">
+            <?php for($i=1;$i<=5;$i++): ?>
+                <?php if($i <= round($promedio)): ?>
+                    <i class="bi bi-star-fill"></i>
+                <?php else: ?>
+                    <i class="bi bi-star"></i>
+                <?php endif; ?>
+            <?php endfor ?>
+        </div>
+        <div class="progress w-50 mb-2">
+            <div class="progress-bar" role="progressbar" style="width: <?= ($promedio/5)*100 ?>%" aria-valuenow="<?= $promedio ?>" aria-valuemin="0" aria-valuemax="5"></div>
+        </div>
+        <div class="promedio-label">Promedio general de todas tus evaluaciones (máx. 5)</div>
+    </div>
 
-    <h2 class="text-center mt-5 mb-4">Historial de Evaluaciones</h2>
-
-    <!-- Tabla de historial de evaluaciones -->
-    <div class="table-responsive mb-5">
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                    <th>Fecha</th>
-                    <th>Calificación</th>
-                    <th>Comentarios</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                // Consulta para obtener el historial de evaluaciones del colaborador
-                $sql_historial = "SELECT Fecharealizacion, Calificacion, Comentarios 
-                                  FROM evaluaciones 
-                                  WHERE Colaborador_idColaborador = $colaborador_id 
-                                  ORDER BY Fecharealizacion DESC";
-                $result_historial = $conn->query($sql_historial);
-
-                if ($result_historial->num_rows > 0) {
-                    // Mostrar cada evaluación en una fila
-                    while ($row = $result_historial->fetch_assoc()) {
-                        echo "<tr>";
-                        echo "<td>" . date('d/m/Y', strtotime(htmlspecialchars($row['Fecharealizacion']))) . "</td>";
-                        echo "<td>";
-                        $calificacion = $row['Calificacion'];
-                        echo "<span class='badge bg-warning text-dark'>$calificacion / 5</span>";
-                        echo "</td>";
-                        echo "<td>";
-                        if (!empty($row['Comentarios'])) {
-                            echo "<div class='comment-box'>";
-                            echo "<div class='comment-date'>" . date('d/m/Y', strtotime(htmlspecialchars($row['Fecharealizacion']))) . "</div>";
-                            echo "<div class='comment-text'>" . nl2br(htmlspecialchars($row['Comentarios'])) . "</div>";
-                            echo "</div>";
-                        } else {
-                            echo "<em>Sin comentarios</em>";
-                        }
-                        echo "</td>";
-                        echo "</tr>";
-                    }
-                } else {
-                    echo "<tr><td colspan='3' class='text-center'>No tienes evaluaciones registradas.</td></tr>";
-                }
-
-                $conn->close();
-                ?>
-            </tbody>
-        </table>
+    <!-- 2. Historial -->
+    <div class="historial-titulo"><i class="bi bi-clock-history"></i> Historial de Evaluaciones</div>
+    <div class="table-responsive">
+    <table class="table table-historial table-bordered align-middle">
+        <thead>
+            <tr>
+                <th>Fecha</th>
+                <th>Calificación</th>
+                <th>Comentario</th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php
+        $sql_hist = "SELECT Fecharealizacion, Calificacion, Comentarios FROM evaluaciones WHERE Colaborador_idColaborador = ? ORDER BY Fecharealizacion DESC";
+        $stmt = $conn->prepare($sql_hist);
+        $stmt->bind_param("i", $colaborador_id);
+        $stmt->execute();
+        $stmt->bind_result($fecha, $calif, $coment);
+        $hayDatos = false;
+        while ($stmt->fetch()):
+            $hayDatos = true;
+        ?>
+            <tr>
+                <td><?= date('d/m/Y', strtotime($fecha)) ?></td>
+                <td>
+                    <span class="badge badge-valor"><?= $calif ?> / 5</span>
+                    <span style="margin-left:7px;">
+                        <?php for($i=1;$i<=5;$i++): ?>
+                            <?= $i <= $calif ? '<i class="bi bi-star-fill text-warning"></i>' : '<i class="bi bi-star text-muted"></i>'; ?>
+                        <?php endfor ?>
+                    </span>
+                </td>
+                <td>
+                    <?php if ($coment): ?>
+                        <div class="comentario-chat"><?= nl2br(htmlspecialchars($coment)) ?></div>
+                    <?php else: ?>
+                        <em class="text-muted">Sin comentarios</em>
+                    <?php endif ?>
+                </td>
+            </tr>
+        <?php endwhile; $stmt->close(); ?>
+        <?php if (!$hayDatos): ?>
+            <tr>
+                <td colspan="3" class="text-muted text-center">No tienes evaluaciones registradas.</td>
+            </tr>
+        <?php endif ?>
+        </tbody>
+    </table>
     </div>
 </div>
-
-<!-- Bootstrap JS y Font Awesome -->
-<script src="https://kit.fontawesome.com/a076d05399.js" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
 </body>
 </html>

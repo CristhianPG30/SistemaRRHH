@@ -1,458 +1,173 @@
 <?php
-// Iniciar sesión de manera segura y configurar las opciones de sesión
-session_start([
-    'cookie_lifetime' => 0,
-    'cookie_secure' => true, // Asegúrate de usar HTTPS para esto si tienes SSL
-    'cookie_httponly' => true,
-    'cookie_samesite' => 'Strict',
-]);
+session_start();
+include 'db.php';
+include 'header.php';
 
-// Regenerar el ID de sesión para evitar ataques de fijación de sesión
-session_regenerate_id(true);
-
-// Verificar si el usuario ha iniciado sesión
-if (!isset($_SESSION['username'])) {
+if (!isset($_SESSION['username']) || $_SESSION['rol'] != 2) {
     header('Location: login.php');
     exit;
 }
 
-$username = $_SESSION['username'];
+$colaborador_id = $_SESSION['colaborador_id'] ?? null;
+$persona_id = $_SESSION['persona_id'] ?? null;
 
-// Incluir la conexión a la base de datos
-include 'db.php';
+// 1. Obtener datos laborales del colaborador
+$sql = "SELECT c.fecha_ingreso, p.Nombre, p.Apellido1, p.Apellido2
+        FROM colaborador c 
+        JOIN persona p ON c.id_persona_fk = p.idPersona
+        WHERE c.idColaborador = ?";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $colaborador_id);
+$stmt->execute();
+$stmt->bind_result($fecha_ingreso, $nombre, $apellido1, $apellido2);
+$stmt->fetch();
+$stmt->close();
 
-// Generar token CSRF
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-}
+$fecha_hoy = date('Y-m-d');
+$fecha_inicio = $fecha_ingreso ? new DateTime($fecha_ingreso) : null;
+$fecha_fin = new DateTime($fecha_hoy);
+$antiguedad = $fecha_inicio ? $fecha_inicio->diff($fecha_fin) : null;
+$anios = $antiguedad ? $antiguedad->y : 0;
+$meses = $antiguedad ? $antiguedad->m : 0;
+$dias = $antiguedad ? $antiguedad->d : 0;
 
-// Obtener lista de empleados con sus días de vacaciones disponibles y si ya se generó el aguinaldo
-function obtenerEmpleadosConVacacionesYAguinaldo() {
-    global $conn;
-    $anioActual = date('Y');
-    $sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, c.idColaborador, c.Fechadeingreso, p.Salario_bruto,
-            COALESCE(SUM(CAST(v.Cantidad_Disponible AS UNSIGNED)), 0) AS Cantidad_Disponible,
-            (SELECT COUNT(*) FROM aguinaldo a WHERE a.Colaborador_idColaborador = c.idColaborador AND YEAR(a.Fechafin) = $anioActual) AS aguinaldo_generado,
-            (SELECT COUNT(*) FROM liquidaciones l WHERE l.Colaborador_idColaborador = c.idColaborador) AS liquidacion_generada
-            FROM persona p
-            JOIN colaborador c ON p.idPersona = c.Persona_idPersona
-            LEFT JOIN vacaciones v ON c.Persona_idPersona = v.Persona_idPersona
-            GROUP BY c.idColaborador";
-    $result = $conn->query($sql);
-    if (!$result) {
-        die("Error al obtener empleados: " . $conn->error);
-    }
-    $empleados = [];
-    while ($row = $result->fetch_assoc()) {
-        $empleados[] = $row;
-    }
-    return $empleados;
-}
+// 2. Obtener salario promedio últimos 6 meses
+$sql = "SELECT AVG(salario_bruto) FROM planillas WHERE id_colaborador_fk = ? AND fecha_generacion >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $colaborador_id);
+$stmt->execute();
+$stmt->bind_result($salario_prom);
+$stmt->fetch();
+$stmt->close();
+$salario_prom = $salario_prom ?: 0;
 
-$empleados = obtenerEmpleadosConVacacionesYAguinaldo();
+// 3. Calcular vacaciones no disfrutadas
+// Días generados por ley (12 por año trabajado)
+$dias_generados = $anios * 12 + intval(($meses / 12) * 12);
+// Días disfrutados
+$sql = "SELECT SUM(DATEDIFF(fecha_fin, fecha_inicio)+1) FROM permisos WHERE id_colaborador_fk = ? AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE Descripcion LIKE '%Vacaciones%' LIMIT 1)";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $colaborador_id);
+$stmt->execute();
+$stmt->bind_result($dias_tomados);
+$stmt->fetch();
+$stmt->close();
+$dias_tomados = $dias_tomados ?: 0;
+$dias_pendientes = max(0, $dias_generados - $dias_tomados);
+
+// 4. Aguinaldo proporcional (últimos 12 meses)
+$sql = "SELECT SUM(salario_bruto) FROM planillas WHERE id_colaborador_fk = ? AND fecha_generacion >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $colaborador_id);
+$stmt->execute();
+$stmt->bind_result($aguinaldo_total);
+$stmt->fetch();
+$stmt->close();
+$aguinaldo_proporcional = ($aguinaldo_total / 12) * (($meses + ($dias/30)) / 12);
+
+// 5. Cesantía y preaviso (según años)
+$preaviso = $anios >= 1 ? $salario_prom : ($salario_prom * 0.5);
+$cesantia = $anios >= 1 ? min($anios,8) * $salario_prom : 0; // Hasta 8 años
+
+// 6. Liquidación total simulada
+$monto_vacaciones = ($salario_prom / 30) * $dias_pendientes;
+$monto_aguinaldo = $aguinaldo_proporcional;
+$monto_total = $preaviso + $cesantia + $monto_vacaciones + $monto_aguinaldo;
 
 ?>
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cálculo de Liquidación - Edginton S.A.</title>
+    <title>Mi Liquidación - Edginton S.A.</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
+    <style>
+        body { background: linear-gradient(135deg,#e9f7ff,#f7fcfe 100%);}
+        .liq-card { background:#fff; border-radius:2.3rem; box-shadow:0 6px 40px #23b6ff13; padding:2.6rem; margin:2rem 0;}
+        .liq-title { color:#13558c; font-weight:bold; font-size:2rem; text-align:center; margin-bottom:1.7rem;}
+        .liq-summary { background:linear-gradient(90deg,#f1fbff,#e2f5fd); border-radius:1.3rem; padding:1.3rem 2.1rem; margin-bottom:2.2rem;}
+        .liq-label { color:#1292c5; font-weight:600; }
+        .liq-value { font-size:1.5rem; font-weight:700; color:#1183b8; }
+        .table-liq th { background: #eaf7fd; color: #2176ae;}
+        .modal-header { background: #23b6ff11; }
+        .modal-title { color:#1d6fa5; font-weight:600;}
+        .badge-success { background:#12ce74; }
+        .badge-warning { background:#ffe05c; color:#735900;}
+        .badge-danger { background:#ee6d4d;}
+        .animate__fadeInDown { animation-duration:.8s;}
+        @media(max-width:650px){.liq-card{padding:1.1rem;}.liq-title{font-size:1.3rem;}}
+    </style>
 </head>
-
 <body>
-
-<?php include 'header.php'; ?>
-
-<div class="container mt-5">
-    <h1 class="text-center">Cálculo de Liquidación</h1>
-    <p class="text-center">Calcula la liquidación de un empleado basado en los años de servicio y vacaciones disponibles.</p>
-
-    <?php
-    // Mostrar mensajes si existen
-    if (isset($mensajeExito)) {
-        echo "<div class='alert alert-success'>$mensajeExito</div>";
-    } elseif (isset($mensajeError)) {
-        echo "<div class='alert alert-danger'>$mensajeError</div>";
-    }
-    ?>
-
-    <div class="card p-4 mb-5 shadow">
-        <form id="formLiquidacion" method="post" action="">
-            <!-- Agregar token CSRF -->
-            <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-
-            <div class="mb-4">
-                <label for="empleado" class="form-label">Empleado:</label>
-                <select id="empleado" name="empleado" class="form-select" onchange="llenarCampos()" required>
-                    <option value="">Seleccione un empleado</option>
-                    <?php foreach ($empleados as $empleado): ?>
-                        <option value="<?= htmlspecialchars($empleado['idColaborador'], ENT_QUOTES, 'UTF-8'); ?>"
-                                data-fecha-ingreso="<?= htmlspecialchars($empleado['Fechadeingreso'], ENT_QUOTES, 'UTF-8'); ?>"
-                                data-salario-bruto="<?= htmlspecialchars($empleado['Salario_bruto'], ENT_QUOTES, 'UTF-8'); ?>"
-                                data-vacaciones="<?= htmlspecialchars($empleado['Cantidad_Disponible'], ENT_QUOTES, 'UTF-8'); ?>"
-                                data-aguinaldo-generado="<?= htmlspecialchars($empleado['aguinaldo_generado'], ENT_QUOTES, 'UTF-8'); ?>"
-                                data-liquidacion-generada="<?= htmlspecialchars($empleado['liquidacion_generada'], ENT_QUOTES, 'UTF-8'); ?>">
-                            <?= htmlspecialchars($empleado['Nombre'] . " " . $empleado['Apellido1'] . " - " . $empleado['Cedula'], ENT_QUOTES, 'UTF-8'); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
+<div class="container">
+    <div class="liq-card animate__animated animate__fadeInDown">
+        <div class="liq-title">
+            <i class="bi bi-bank2"></i> Cálculo Simulado de Mi Liquidación
+        </div>
+        <div class="liq-summary row text-center mb-4">
+            <div class="col-6 col-md-3">
+                <div class="liq-label">Colaborador</div>
+                <div class="liq-value"><?= htmlspecialchars("$nombre $apellido1 $apellido2") ?></div>
             </div>
-
-            <!-- Campo de Fecha de Salida -->
-            <div class="mb-4">
-                <label for="fechaSalida" class="form-label">Fecha de Salida:</label>
-                <input type="date" id="fechaSalida" name="fechaSalida" class="form-control" required>
+            <div class="col-6 col-md-3">
+                <div class="liq-label">Antigüedad</div>
+                <div class="liq-value"><?= "$anios años, $meses meses" ?></div>
             </div>
-
-            <!-- Campo de Tipo de Moneda (fijo en CRC) -->
-            <div class="mb-4">
-                <label for="tipoMoneda" class="form-label">Tipo de Moneda:</label>
-                <input type="text" id="tipoMoneda" name="tipoMoneda" class="form-control" value="CRC" readonly>
+            <div class="col-6 col-md-3">
+                <div class="liq-label">Salario Promedio</div>
+                <div class="liq-value">₡<?= number_format($salario_prom,2) ?></div>
             </div>
-
-            <div class="row">
-                <div class="col-md-6 mb-4">
-                    <label for="aniosServicio" class="form-label">Años de Servicio:</label>
-                    <input type="number" id="aniosServicio" name="aniosServicio" class="form-control" min="0" readonly required>
-                </div>
-
-                <div class="col-md-6 mb-4">
-                    <label for="salarioBase" class="form-label">Salario Base Mensual (₡):</label>
-                    <input type="number" id="salarioBase" name="salarioBase" class="form-control" step="0.01" readonly required>
-                </div>
-            </div>
-
-            <!-- Campo de vacaciones disponibles (solo lectura) -->
-            <div class="mb-4">
-                <label for="diasDisponibles" class="form-label">Días de Vacaciones Disponibles:</label>
-                <input type="number" id="diasDisponibles" name="diasDisponibles" class="form-control" min="0" readonly required>
-            </div>
-
-            <div class="mb-4">
-                <label for="razon" class="form-label">Razón de la Liquidación:</label>
-                <select id="razon" name="razon" class="form-select" required>
-                    <option value="">Seleccione una razón</option>
-                    <option value="1">Despido sin responsabilidad patronal</option>
-                    <option value="2">Renuncia voluntaria</option>
-                    <option value="3">Mutuo acuerdo</option>
-                    <!-- Asigna valores numéricos ya que 'Razon' es decimal -->
-                </select>
-            </div>
-
-            <!-- Campos calculados -->
-            <div class="row">
-                <div class="col-md-6 mb-4">
-                    <label for="cesantia" class="form-label">Cesantía (₡):</label>
-                    <input type="number" id="cesantia" name="cesantia" class="form-control" step="0.01" readonly>
-                </div>
-
-                <div class="col-md-6 mb-4">
-                    <label for="aguinaldoProporcional" class="form-label">Aguinaldo Proporcional (₡):</label>
-                    <input type="number" id="aguinaldoProporcional" name="aguinaldoProporcional" class="form-control" step="0.01" readonly>
-                </div>
-            </div>
-
-            <div class="mb-4">
-                <label for="vacacionesPago" class="form-label">Pago de Vacaciones (₡):</label>
-                <input type="number" id="vacacionesPago" name="vacacionesPago" class="form-control" step="0.01" readonly>
-            </div>
-
-            <div class="mb-4">
-                <label for="totalLiquidacion" class="form-label">Total de Liquidación (₡):</label>
-                <input type="number" id="totalLiquidacion" name="totalLiquidacion" class="form-control" step="0.01" readonly>
-            </div>
-
-            <div class="d-flex justify-content-end">
-                <button type="button" class="btn btn-primary me-2" onclick="mostrarConfirmacion()">Calcular Liquidación</button>
-                <button type="reset" class="btn btn-secondary" onclick="limpiarCampos()">Limpiar</button>
-            </div>
-        </form>
-    </div>
-
-    <!-- Modal de Confirmación -->
-    <div class="modal fade" id="confirmacionModal" tabindex="-1" aria-labelledby="confirmacionModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 id="confirmacionModalLabel" class="modal-title">Confirmación de Liquidación</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
-                </div>
-                <div class="modal-body">
-                    <p>¿Está seguro de que desea registrar esta liquidación?</p>
-                    <!-- Mostrar resumen -->
-                    <ul class="list-group">
-                        <li class="list-group-item"><strong>Empleado:</strong> <span id="resumenEmpleado"></span></li>
-                        <li class="list-group-item"><strong>Fecha de Salida:</strong> <span id="resumenFechaSalida"></span></li>
-                        <li class="list-group-item"><strong>Tipo de Moneda:</strong> <span id="resumenTipoMoneda"></span></li>
-                        <li class="list-group-item"><strong>Años de Servicio:</strong> <span id="resumenAniosServicio"></span></li>
-                        <li class="list-group-item"><strong>Salario Base Mensual:</strong> <span id="resumenSalarioBase"></span></li>
-                        <li class="list-group-item"><strong>Vacaciones Disponibles:</strong> <span id="resumenDiasDisponibles"></span></li>
-                        <li class="list-group-item"><strong>Cesantía:</strong> <span id="resumenCesantia"></span></li>
-                        <li class="list-group-item"><strong>Aguinaldo Proporcional:</strong> <span id="resumenAguinaldo"></span></li>
-                        <li class="list-group-item"><strong>Total de Liquidación:</strong> <span id="resumenTotalLiquidacion"></span></li>
-                    </ul>
-                </div>
-                <div class="modal-footer">
-                    <form method="post" action="">
-                        <!-- Incluir campos ocultos con los datos -->
-                        <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
-                        <input type="hidden" name="empleado" id="hiddenEmpleado">
-                        <input type="hidden" name="fechaSalida" id="hiddenFechaSalida">
-                        <input type="hidden" name="tipoMoneda" id="hiddenTipoMoneda">
-                        <input type="hidden" name="aniosServicio" id="hiddenAniosServicio">
-                        <input type="hidden" name="salarioBase" id="hiddenSalarioBase">
-                        <input type="hidden" name="diasDisponibles" id="hiddenDiasDisponibles">
-                        <input type="hidden" name="razon" id="hiddenRazon">
-                        <input type="hidden" name="cesantia" id="hiddenCesantia">
-                        <input type="hidden" name="aguinaldoProporcional" id="hiddenAguinaldoProporcional">
-                        <input type="hidden" name="vacacionesPago" id="hiddenVacacionesPago">
-                        <input type="hidden" name="totalLiquidacion" id="hiddenTotalLiquidacion">
-                        <button type="submit" class="btn btn-primary">Confirmar</button>
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                    </form>
-                </div>
+            <div class="col-6 col-md-3">
+                <div class="liq-label">Vacaciones Pendientes</div>
+                <div class="liq-value"><?= $dias_pendientes ?> días</div>
             </div>
         </div>
-    </div>
-
-    <?php
-    // Procesar la liquidación
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['empleado'])) {
-        // Verificar el token CSRF
-        if (!hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
-            $mensajeError = "Acción no autorizada.";
-            exit;
-        }
-
-        // Sanitizar y validar entradas
-        $idColaborador = intval($_POST['empleado']);
-        $fechaSalida = $_POST['fechaSalida'];
-        $tipoMoneda = $_POST['tipoMoneda']; // Será 'CRC'
-        $aniosServicio = intval($_POST['aniosServicio']);
-        $salarioBase = floatval($_POST['salarioBase']);
-        $diasDisponibles = intval($_POST['diasDisponibles']);
-        $razon = floatval($_POST['razon']); // Debe ser numérico porque la columna 'Razon' es decimal
-        $cesantia = floatval($_POST['cesantia']);
-        $aguinaldoProporcional = floatval($_POST['aguinaldoProporcional']);
-        $vacacionesPago = floatval($_POST['vacacionesPago']);
-        $totalLiquidacion = floatval($_POST['totalLiquidacion']);
-
-        // Verificar si el colaborador ya fue liquidado
-        $sqlVerificar = "SELECT COUNT(*) AS existe FROM liquidaciones WHERE Colaborador_idColaborador = ?";
-        $stmtVerificar = $conn->prepare($sqlVerificar);
-        $stmtVerificar->bind_param("i", $idColaborador);
-        $stmtVerificar->execute();
-        $resultVerificar = $stmtVerificar->get_result();
-        $rowVerificar = $resultVerificar->fetch_assoc();
-        $stmtVerificar->close();
-
-        if ($rowVerificar['existe'] > 0) {
-            // El colaborador ya fue liquidado
-            $mensajeError = "Error: Este colaborador ya ha sido liquidado anteriormente.";
-        } else {
-            // Verificar si el aguinaldo ya fue generado para el año actual
-            $anioActual = date('Y');
-            $sqlAguinaldo = "SELECT COUNT(*) AS existe FROM aguinaldo 
-                             WHERE Colaborador_idColaborador = ? AND YEAR(Fechafin) = ?";
-            $stmtAguinaldo = $conn->prepare($sqlAguinaldo);
-            $stmtAguinaldo->bind_param("ii", $idColaborador, $anioActual);
-            $stmtAguinaldo->execute();
-            $resultAguinaldo = $stmtAguinaldo->get_result();
-            $rowAguinaldo = $resultAguinaldo->fetch_assoc();
-            $stmtAguinaldo->close();
-
-            if ($rowAguinaldo['existe'] > 0) {
-                // El aguinaldo ya fue generado, no corresponde aguinaldo proporcional
-                $aguinaldoProporcional = 0;
-                // Recalcular el total de liquidación
-                $totalLiquidacion = $cesantia + $vacacionesPago;
-            }
-
-            // Insertar la liquidación en la base de datos
-            $sql = "INSERT INTO liquidaciones (Cesantia, VacacionesPendientes, Razon, Total_liquidacion, FechadeLiquidacion, FechadeSalida, Moneda, Colaborador_idColaborador) 
-                    VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)";
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param(
-                "dddsssi",
-                $cesantia,
-                $vacacionesPago,
-                $razon,
-                $totalLiquidacion,
-                $fechaSalida,
-                $Moneda,
-                $idColaborador
-            );
-            if ($stmt->execute()) {
-                $mensajeExito = "Liquidación registrada con éxito.";
-            } else {
-                $mensajeError = "Error al registrar la liquidación: " . $stmt->error;
-            }
-            $stmt->close();
-        }
-    }
-    ?>
-
-    <!-- Mostrar resultados si la liquidación fue procesada y no hubo error -->
-    <?php if (isset($mensajeExito)): ?>
-        <?php
-        // Obtener los detalles del empleado
-        $empleadoSeleccionado = array_filter($empleados, fn($emp) => $emp['idColaborador'] == $idColaborador);
-        $empleadoSeleccionado = reset($empleadoSeleccionado);
-        $simboloMoneda = '₡';
-        ?>
-        <div class="card p-4 shadow">
-            <h2 class="mb-4">Resultado de la Liquidación</h2>
-            <p><strong>Empleado:</strong> <?= htmlspecialchars($empleadoSeleccionado['Nombre'] . ' ' . $empleadoSeleccionado['Apellido1'], ENT_QUOTES, 'UTF-8'); ?></p>
-            <p><strong>Fecha de Salida:</strong> <?= htmlspecialchars($fechaSalida, ENT_QUOTES, 'UTF-8'); ?></p>
-            <p><strong>Tipo de Moneda:</strong> <?= htmlspecialchars($tipoMoneda, ENT_QUOTES, 'UTF-8'); ?></p>
-            <p><strong>Años de Servicio:</strong> <?= $aniosServicio; ?></p>
-            <p><strong>Salario Base Mensual:</strong> <?= $simboloMoneda . number_format($salarioBase, 2); ?></p>
-            <p><strong>Vacaciones Disponibles:</strong> <?= $diasDisponibles; ?> días</p>
-            <p><strong>Cesantía:</strong> <?= $simboloMoneda . number_format($cesantia, 2); ?></p>
-            <p><strong>Aguinaldo Proporcional:</strong> <?= $simboloMoneda . number_format($aguinaldoProporcional, 2); ?></p>
-            <p><strong>Total de Liquidación:</strong> <?= $simboloMoneda . number_format($totalLiquidacion, 2); ?></p>
+        <h5 class="mb-4 mt-3 text-primary"><i class="bi bi-list-check"></i> Desglose de Beneficios</h5>
+        <table class="table table-liq table-bordered text-center">
+            <thead>
+                <tr>
+                    <th>Concepto</th>
+                    <th>Monto (₡)</th>
+                    <th>Detalle</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Preaviso</td>
+                    <td><?= number_format($preaviso,2) ?></td>
+                    <td><span class="badge bg-info">1 salario promedio<?= $anios < 1 ? " x 0.5 (menos de 1 año)" : "" ?></span></td>
+                </tr>
+                <tr>
+                    <td>Cesantía</td>
+                    <td><?= number_format($cesantia,2) ?></td>
+                    <td><span class="badge bg-success"><?= $anios >= 1 ? min($anios,8) . " salario(s)" : "No aplica" ?></span></td>
+                </tr>
+                <tr>
+                    <td>Vacaciones no disfrutadas</td>
+                    <td><?= number_format($monto_vacaciones,2) ?></td>
+                    <td><span class="badge bg-warning"><?= $dias_pendientes ?> días</span></td>
+                </tr>
+                <tr>
+                    <td>Aguinaldo proporcional</td>
+                    <td><?= number_format($monto_aguinaldo,2) ?></td>
+                    <td><span class="badge bg-secondary">Últimos 12 meses</span></td>
+                </tr>
+                <tr style="font-weight:700; font-size:1.09rem;">
+                    <td>TOTAL LIQUIDACIÓN</td>
+                    <td colspan="2" class="text-success">₡<?= number_format($monto_total,2) ?></td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="alert alert-info text-center mt-4" style="border-radius:1rem;">
+            <i class="bi bi-info-circle"></i>
+            <b>Nota:</b> Este cálculo es simulado según normativa costarricense y tu información registrada en el sistema. <br>
+            Consulta RRHH para la liquidación oficial y personalizada.
         </div>
-    <?php endif; ?>
+    </div>
 </div>
-
-<script>
-// Función para llenar los campos y calcular los valores
-function llenarCampos() {
-    var empleadoSelect = document.getElementById("empleado");
-    var selectedOption = empleadoSelect.options[empleadoSelect.selectedIndex];
-
-    if (selectedOption.value === "") {
-        limpiarCampos();
-        return;
-    }
-
-    var fechaIngreso = new Date(selectedOption.getAttribute("data-fecha-ingreso"));
-    var salarioBruto = parseFloat(selectedOption.getAttribute("data-salario-bruto"));
-    var diasDisponibles = parseInt(selectedOption.getAttribute("data-vacaciones")) || 0;
-    var aguinaldoGenerado = parseInt(selectedOption.getAttribute("data-aguinaldo-generado")) > 0;
-    var liquidacionGenerada = parseInt(selectedOption.getAttribute("data-liquidacion-generada")) > 0;
-
-    if (liquidacionGenerada) {
-        alert("Este colaborador ya ha sido liquidado anteriormente.");
-        limpiarCampos();
-        return;
-    }
-
-    // Calcular años de servicio
-    var hoy = new Date();
-    var aniosServicio = hoy.getFullYear() - fechaIngreso.getFullYear();
-    var mesDiferencia = hoy.getMonth() - fechaIngreso.getMonth();
-    var diaDiferencia = hoy.getDate() - fechaIngreso.getDate();
-    if (mesDiferencia < 0 || (mesDiferencia === 0 && diaDiferencia < 0)) {
-        aniosServicio--;
-    }
-
-    // Calcular cesantía según la legislación de Costa Rica
-    var cesantia = 0;
-    if (aniosServicio >= 1) {
-        if (aniosServicio <= 8) {
-            cesantia = salarioBruto * aniosServicio;
-        } else {
-            cesantia = salarioBruto * 8;
-        }
-    }
-
-    var aguinaldoProporcional = 0;
-
-    if (!aguinaldoGenerado) {
-        // Calcular aguinaldo proporcional
-        var fechaInicioAguinaldo = new Date(hoy.getFullYear(), 0, 1); // 1 de enero del año actual
-        var mesesTrabajados = (hoy.getMonth() - fechaInicioAguinaldo.getMonth()) + 1;
-        if (mesesTrabajados > 0) {
-            aguinaldoProporcional = (salarioBruto * mesesTrabajados) / 12;
-        }
-    }
-
-    // Calcular pago de vacaciones
-    var salarioDiario = salarioBruto / 30;
-    var vacacionesPago = salarioDiario * diasDisponibles;
-
-    // Calcular total de liquidación
-    var totalLiquidacion = cesantia + aguinaldoProporcional + vacacionesPago;
-
-    // Mostrar resultados en los campos correspondientes
-    document.getElementById("aniosServicio").value = aniosServicio;
-    document.getElementById("salarioBase").value = salarioBruto.toFixed(2);
-    document.getElementById("diasDisponibles").value = diasDisponibles;
-    document.getElementById("cesantia").value = cesantia.toFixed(2);
-    document.getElementById("aguinaldoProporcional").value = aguinaldoProporcional.toFixed(2);
-    document.getElementById("vacacionesPago").value = vacacionesPago.toFixed(2);
-    document.getElementById("totalLiquidacion").value = totalLiquidacion.toFixed(2);
-}
-
-// Función para limpiar los campos
-function limpiarCampos() {
-    document.getElementById("formLiquidacion").reset();
-    document.getElementById("aniosServicio").value = "";
-    document.getElementById("salarioBase").value = "";
-    document.getElementById("diasDisponibles").value = "";
-    document.getElementById("cesantia").value = "";
-    document.getElementById("aguinaldoProporcional").value = "";
-    document.getElementById("vacacionesPago").value = "";
-    document.getElementById("totalLiquidacion").value = "";
-}
-
-// Función para mostrar el modal de confirmación
-function mostrarConfirmacion() {
-    // Validar que todos los campos necesarios estén llenos
-    var empleadoSelect = document.getElementById("empleado");
-    if (empleadoSelect.value === "") {
-        alert("Por favor, seleccione un empleado.");
-        return;
-    }
-
-    var fechaSalidaInput = document.getElementById("fechaSalida");
-    if (fechaSalidaInput.value === "") {
-        alert("Por favor, ingrese la fecha de salida.");
-        return;
-    }
-
-    var razonSelect = document.getElementById("razon");
-    if (razonSelect.value === "") {
-        alert("Por favor, seleccione la razón de la liquidación.");
-        return;
-    }
-
-    // Llenar los campos ocultos del formulario en el modal
-    document.getElementById("hiddenEmpleado").value = empleadoSelect.value;
-    document.getElementById("hiddenFechaSalida").value = fechaSalidaInput.value;
-    document.getElementById("hiddenTipoMoneda").value = document.getElementById("tipoMoneda").value;
-    document.getElementById("hiddenAniosServicio").value = document.getElementById("aniosServicio").value;
-    document.getElementById("hiddenSalarioBase").value = document.getElementById("salarioBase").value;
-    document.getElementById("hiddenDiasDisponibles").value = document.getElementById("diasDisponibles").value;
-    document.getElementById("hiddenRazon").value = razonSelect.value;
-    document.getElementById("hiddenCesantia").value = document.getElementById("cesantia").value;
-    document.getElementById("hiddenAguinaldoProporcional").value = document.getElementById("aguinaldoProporcional").value;
-    document.getElementById("hiddenVacacionesPago").value = document.getElementById("vacacionesPago").value;
-    document.getElementById("hiddenTotalLiquidacion").value = document.getElementById("totalLiquidacion").value;
-
-    // Mostrar resumen en el modal
-    var selectedOption = empleadoSelect.options[empleadoSelect.selectedIndex];
-    document.getElementById("resumenEmpleado").textContent = selectedOption.textContent;
-    document.getElementById("resumenFechaSalida").textContent = fechaSalidaInput.value;
-    document.getElementById("resumenTipoMoneda").textContent = document.getElementById("tipoMoneda").value;
-    document.getElementById("resumenAniosServicio").textContent = document.getElementById("aniosServicio").value;
-    document.getElementById("resumenSalarioBase").textContent = "₡" + parseFloat(document.getElementById("salarioBase").value).toFixed(2);
-    document.getElementById("resumenDiasDisponibles").textContent = document.getElementById("diasDisponibles").value;
-    document.getElementById("resumenCesantia").textContent = "₡" + parseFloat(document.getElementById("cesantia").value).toFixed(2);
-    document.getElementById("resumenAguinaldo").textContent = "₡" + parseFloat(document.getElementById("aguinaldoProporcional").value).toFixed(2);
-    document.getElementById("resumenTotalLiquidacion").textContent = "₡" + parseFloat(document.getElementById("totalLiquidacion").value).toFixed(2);
-
-    // Mostrar el modal
-    var modal = new bootstrap.Modal(document.getElementById('confirmacionModal'));
-    modal.show();
-}
-</script>
-
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
 </body>
 </html>

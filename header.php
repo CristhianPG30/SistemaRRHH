@@ -1,219 +1,167 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-
-if (!isset($_SESSION['username'])) {
-    header("Location: login.php");
-    exit;
-}
-
+if (session_status() === PHP_SESSION_NONE) session_start();
+if (!isset($_SESSION['username'])) { header("Location: login.php"); exit; }
 $username = $_SESSION['username'];
 $rol = $_SESSION['rol'] ?? 0;
 
-// ✅ CORRECCIÓN: Se envuelve la función en un "if" para evitar que se declare dos veces.
-if (!function_exists('isActive')) {
-    function isActive($pageNames) {
-        $currentPage = basename($_SERVER['PHP_SELF']);
-        if (!is_array($pageNames)) {
-            $pageNames = [$pageNames];
-        }
-        return in_array($currentPage, $pageNames) ? 'active' : '';
-    }
+function isActive($pageNames) {
+    $currentPage = basename($_SERVER['PHP_SELF']);
+    if (!is_array($pageNames)) $pageNames = [$pageNames];
+    return in_array($currentPage, $pageNames) ? 'active' : '';
 }
 ?>
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sistema RRHH - Edginton S.A.</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- SIDEBAR SOLO – NO MODIFICA EL BODY -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<style>
+#mainSidebar {
+    width: 270px;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #18c0ff 0%, #0e1228 100%);
+    color: #fff;
+    box-shadow: 4px 0 20px #13c6f120;
+    position: fixed;
+    top: 0; left: 0; z-index: 1030;
+    display: flex; flex-direction: column;
+    border-top-right-radius: 2.3rem;
+    border-bottom-right-radius: 2.3rem;
+    transition: box-shadow .2s;
+}
+.sidebar-logo-box {
+    padding: 2.2rem 1rem 1.2rem 1rem;
+    text-align: center;
+    background: rgba(255,255,255,.08);
+    border-top-right-radius: 2.3rem;
+}
+.sidebar-logo-img {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    background: #fff;
+    object-fit: contain;
+    border: 3.5px solid #17b9ee;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 18px #13c6f144;
+}
+.sidebar-company {
+    font-size: 1.23rem;
+    font-weight: 900;
+    color: #fff;
+    letter-spacing: .6px;
+    margin-bottom: .15rem;
+}
+.sidebar-role {
+    font-size: 0.95rem;
+    color: #dcf6ff;
+    font-weight: 600;
+    text-shadow: 0 1px 5px #0e122828;
+}
+.sidebar-menu {
+    flex: 1;
+    padding: 2rem 1rem 1rem 1rem;
+}
+.sidebar-menu .nav-link {
+    color: #e8f4fa;
+    font-size: 1.07rem;
+    font-weight: 600;
+    padding: 1rem 1.2rem;
+    margin-bottom: .2rem;
+    border-radius: 1.1rem;
+    transition: background .17s, color .17s;
+    display: flex; align-items: center; gap: 0.9rem;
+}
+.sidebar-menu .nav-link.active, .sidebar-menu .nav-link:hover {
+    background: linear-gradient(90deg, #14b9e8 60%, #21aaff 100%);
+    color: #fff !important;
+}
+.sidebar-menu .nav-link i {
+    font-size: 1.35rem;
+}
+.sidebar-submenu {
+    padding-left: 1.2rem;
+}
+.sidebar-submenu .nav-link {
+    background: transparent;
+    font-weight: 500;
+    font-size: 1rem;
+    color: #b6e2fc;
+}
+.sidebar-footer {
+    padding: 1.3rem 1rem;
+    background: rgba(255,255,255,.06);
+    border-bottom-right-radius: 2.3rem;
+    border-top: 1px solid #26c7fc22;
+    margin-top: auto;
+}
+.sidebar-footer .btn {
+    width: 100%;
+    font-weight: 700;
+    letter-spacing: .2px;
+    border-radius: 1rem;
+    background: linear-gradient(90deg, #21aaff 60%, #14b9e8 100%);
+    color: #fff;
+    box-shadow: 0 4px 24px #21b2ff19;
+    border: none;
+}
+.sidebar-footer .btn:hover {
+    background: linear-gradient(90deg, #23b6ff 30%, #47d9fd 100%);
+    color: #fff;
+}
+@media (max-width: 1100px) {
+    #mainSidebar { width: 100vw; min-width:0; max-width:350px; border-radius: 0 0 2rem 2rem;}
+}
+</style>
 
-    <style>
-        :root {
-            --sidebar-width: 280px;
-            --sidebar-bg: #191c24;
-            --link-color: #aeb1be;
-            --link-hover-color: #ffffff;
-            --accent-color: #00bfff;
-        }
-
-        body {
-            font-family: 'Poppins', sans-serif;
-            background-color: #f4f7fc;
-            padding-left: var(--sidebar-width);
-        }
-
-        .sidebar {
-            width: var(--sidebar-width);
-            height: 100vh;
-            position: fixed;
-            top: 0;
-            left: 0;
-            background: var(--sidebar-bg);
-            display: flex;
-            flex-direction: column;
-            z-index: 1100;
-            transition: transform 0.3s ease-in-out;
-        }
-        
-        .sidebar-brand {
-            padding: 1.5rem;
-            text-align: center;
-            color: #fff;
-        }
-        
-        .sidebar-brand .sidebar-logo {
-            max-width: 70px;
-            margin-bottom: 0.75rem;
-            border-radius: 50%;
-            background-color: #fff;
-            padding: 5px;
-            transition: transform 0.3s ease;
-        }
-        .sidebar-brand:hover .sidebar-logo {
-            transform: scale(1.1);
-        }
-        .sidebar-brand h5 {
-            font-weight: 700;
-            letter-spacing: 1px;
-        }
-
-        .sidebar-nav {
-            padding: 1rem;
-            flex-grow: 1;
-        }
-        .sidebar .nav-link {
-            color: var(--link-color);
-            font-weight: 500;
-            padding: 0.9rem 1.2rem;
-            margin-bottom: 0.5rem;
-            border-radius: 0.6rem;
-            display: flex;
-            align-items: center;
-            transition: all 0.2s ease-in-out;
-            border-left: 4px solid transparent;
-        }
-        .sidebar .nav-link i {
-            font-size: 1.3rem;
-            margin-right: 1rem;
-            width: 25px;
-            transition: all 0.2s ease-in-out;
-        }
-        .sidebar .nav-link:hover {
-            color: var(--link-hover-color);
-        }
-        .sidebar .nav-link:hover i {
-            color: var(--accent-color);
-        }
-        .sidebar .nav-link.active {
-            color: var(--link-hover-color);
-            font-weight: 600;
-            background: linear-gradient(90deg, rgba(0, 191, 255, 0.15), rgba(0, 191, 255, 0.01));
-            border-left-color: var(--accent-color);
-        }
-        .sidebar .nav-link.active i {
-            color: var(--accent-color);
-        }
-        .sidebar .collapse .nav-link {
-            padding-left: 3.5rem;
-        }
-        
-        .sidebar-footer {
-            padding: 1rem;
-            margin-top: auto;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        .user-profile .dropdown-toggle::after { display: none; }
-        .user-profile .user-name { font-weight: 600; color: #fff; }
-        .user-profile .user-role { font-size: 0.8em; color: var(--link-color); }
-        
-        .main-content-wrapper {
-            padding-left: var(--sidebar-width);
-            transition: margin-left 0.3s ease-in-out;
-        }
-        
-        @media (max-width: 992px) {
-            body { padding-left: 0; }
-            .sidebar { transform: translateX(calc(-1 * var(--sidebar-width))); }
-            .sidebar.active { transform: translateX(0); }
-            .main-content-wrapper { padding-left: 0; }
-        }
-    </style>
-</head>
-<body>
-
-<div class="sidebar">
-    <a class="sidebar-brand text-decoration-none" href="#">
-        <img src="img/edginton.png" alt="Logo" class="sidebar-logo">
-        <h5>Edginton S.A.</h5>
-    </a>
-    
-    <ul class="nav flex-column sidebar-nav">
-        <?php if ($rol == 1): // --- MENÚ ADMINISTRADOR --- ?>
-            <li class="nav-item">
-                <a class="nav-link <?= isActive(['index_administrador.php']); ?>" href="index_administrador.php"><i class="bi bi-grid-1x2-fill"></i>Dashboard</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link collapsed" href="#gestion-submenu" data-bs-toggle="collapse" role="button">
-                    <i class="bi bi-people-fill"></i>Gestión <i class="bi bi-chevron-down ms-auto"></i>
-                </a>
-                <div class="collapse <?= isActive(['personas.php', 'form_persona.php', 'usuarios.php', 'form_usuario.php']) ? 'show' : ''; ?>" id="gestion-submenu">
-                    <a class="nav-link <?= isActive(['personas.php', 'form_persona.php']); ?>" href="personas.php">Personal</a>
-                    <a class="nav-link <?= isActive(['usuarios.php', 'form_usuario.php']); ?>" href="usuarios.php">Usuarios</a>
-                </div>
-            </li>
-             <li class="nav-item">
-                <a class="nav-link" href="nóminas.php"><i class="bi bi-cash-stack"></i>Generar Planilla</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link" href="configuración.php"><i class="bi bi-sliders"></i>Mantenimientos</a>
-            </li>
-        <?php elseif ($rol == 2): // --- MENÚ COLABORADOR --- ?>
-            <li class="nav-item">
-                <a class="nav-link <?= isActive(['index_colaborador.php']); ?>" href="index_colaborador.php"><i class="bi bi-house-door-fill"></i>Inicio</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?= isActive(['solicitud_permisos.php']); ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-check-fill"></i>Permisos y Vacaciones</a>
-            </li>
-            <li class="nav-item">
-                <a class="nav-link <?= isActive(['horas_extra.php']); ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i>Horas Extra</a>
-            </li>
-             <li class="nav-item">
-                <a class="nav-link <?= isActive(['evaluacion.php']); ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i>Mis Evaluaciones</a>
-            </li>
-             <li class="nav-item">
-                <a class="nav-link <?= isActive(['salario.php']); ?>" href="salario.php"><i class="bi bi-cash-coin"></i>Mi Salario</a>
-            </li>
-        <?php endif; ?>
-    </ul>
-
-    <div class="sidebar-footer dropdown">
-        <a href="#" class="d-flex align-items-center text-decoration-none dropdown-toggle user-profile" data-bs-toggle="dropdown" aria-expanded="false">
-            <div class="d-flex align-items-center">
-                 <i class="bi bi-person-circle fs-2 me-2"></i>
-                <div>
-                    <strong class="user-name"><?= htmlspecialchars($username); ?></strong>
-                    <small class="d-block user-role">
-                    <?php
-                        switch($rol) {
-                            case 1: echo 'Administrador'; break;
-                            case 2: echo 'Colaborador'; break;
-                            case 3: echo 'Jefatura'; break;
-                            case 4: echo 'RRHH'; break;
-                        }
-                    ?>
-                    </small>
-                </div>
-            </div>
-        </a>
-        <ul class="dropdown-menu dropdown-menu-dark">
-            <li><a class="dropdown-item" href="logout.php"><i class="bi bi-box-arrow-right me-2"></i>Cerrar Sesión</a></li>
-        </ul>
+<aside id="mainSidebar">
+    <div class="sidebar-logo-box">
+        <img src="img/edginton.png" alt="Logo" class="sidebar-logo-img mb-2">
+        <div class="sidebar-company">Edginton S.A.</div>
+        <div class="sidebar-role">
+            <?= ($rol == 1 ? 'Administrador' : ($rol == 2 ? 'Colaborador' : 'Usuario')) ?>
+        </div>
     </div>
-</div>
+    <nav class="sidebar-menu nav flex-column">
+        <a class="nav-link <?= isActive('index_colaborador.php') ?>" href="index_colaborador.php">
+            <i class="bi bi-house-door-fill"></i> Inicio
+        </a>
+        <!-- Solicitudes con submenú desplegable -->
+        <div class="nav flex-column">
+            <a class="nav-link d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#solicitudesMenu" role="button" aria-expanded="<?= isActive(['solicitud_permisos.php','solicitud_vacaciones.php','solicitud_incapacidad.php','horas_extra.php']) ? 'true':'false' ?>" aria-controls="solicitudesMenu">
+                <span><i class="bi bi-ui-checks"></i> Solicitudes</span>
+                <i class="bi bi-chevron-down ms-auto"></i>
+            </a>
+            <div class="collapse <?= isActive(['solicitud_permisos.php','solicitud_vacaciones.php','solicitud_incapacidad.php','horas_extra.php']) ? 'show':'' ?>" id="solicitudesMenu">
+                <a class="nav-link sidebar-submenu <?= isActive('solicitud_permisos.php') ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-check"></i> Permiso</a>
+                <a class="nav-link sidebar-submenu <?= isActive('solicitud_vacaciones.php') ?>" href="solicitud_vacaciones.php"><i class="bi bi-umbrella"></i> Vacaciones</a>
+                <a class="nav-link sidebar-submenu <?= isActive('solicitud_incapacidad.php') ?>" href="solicitud_incapacidad.php"><i class="bi bi-emoji-dizzy"></i> Incapacidad</a>
+                <a class="nav-link sidebar-submenu <?= isActive('horas_extra.php') ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i> Horas Extra</a>
+            </div>
+        </div>
+        <a class="nav-link <?= isActive('control_asistencia.php') ?>" href="control_asistencia.php">
+            <i class="bi bi-journal-check"></i> Mi Asistencia
+        </a>
+        <a class="nav-link <?= isActive('mis_solicitudes.php') ?>" href="mis_solicitudes.php">
+            <i class="bi bi-list-check"></i> Mis Solicitudes
+        </a>
+        <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php">
+            <i class="bi bi-star-fill"></i> Mis Evaluaciones
+        </a>
+        <a class="nav-link <?= isActive('salario.php') ?>" href="salario.php">
+            <i class="bi bi-cash-coin"></i> Mi Salario
+        </a>
+        <a class="nav-link <?= isActive('liquidación.php') ?>" href="liquidación.php">
+            <i class="bi bi-bank"></i> Mi Liquidación
+        </a>
+        <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php">
+            <i class="bi bi-gift"></i> Mi Aguinaldo
+        </a>
+    </nav>
+    <div class="sidebar-footer">
+        <form action="logout.php" method="post">
+            <button type="submit" class="btn"><i class="bi bi-box-arrow-right me-2"></i> Cerrar Sesión</button>
+        </form>
+    </div>
+</aside>
 
-<div class="main-content-wrapper">
+<!-- Bootstrap JS para collapse/submenú -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

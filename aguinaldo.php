@@ -1,309 +1,126 @@
-<?php  
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
-if (!isset($_SESSION['username'])) {
+<?php
+session_start();
+include 'db.php';
+include 'header.php';
+
+if (!isset($_SESSION['username']) || $_SESSION['rol'] != 2) {
     header('Location: login.php');
     exit;
 }
-$username = $_SESSION['username'];
 
-include 'db.php'; // Conexión a la base de datos
+$colaborador_id = $_SESSION['colaborador_id'] ?? null;
 
-// Inicializar mensaje
-$mensaje = '';
+// 1. Calcular aguinaldo actual (suma bruta últimos 12 meses dividido 12)
+$sql = "SELECT 
+    SUM(salario_bruto) as total,
+    COUNT(DISTINCT MONTH(fecha_generacion)) as meses
+    FROM planillas 
+    WHERE id_colaborador_fk = ? AND fecha_generacion BETWEEN DATE_SUB(CURDATE(), INTERVAL 12 MONTH) AND CURDATE()";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $colaborador_id);
+$stmt->execute();
+$stmt->bind_result($total_bruto, $meses_trabajados);
+$stmt->fetch();
+$stmt->close();
 
-// Obtener años en los que se ha generado aguinaldo
-function obtenerAniosAguinaldoGenerado() {
-    global $conn;
-    $sql = "SELECT DISTINCT YEAR(Fechainicio) as anio FROM aguinaldo ORDER BY anio DESC";
-    $result = $conn->query($sql);
-    $anios = [];
-    while ($row = $result->fetch_assoc()) {
-        $anios[] = $row['anio'];
-    }
-    return $anios;
+$aguinaldo = $meses_trabajados > 0 ? ($total_bruto / 12) : 0;
+
+// 2. Historial por año
+$historial = [];
+$sql = "SELECT YEAR(fecha_generacion) as anio, SUM(salario_bruto) as total_bruto, COUNT(DISTINCT MONTH(fecha_generacion)) as meses 
+        FROM planillas 
+        WHERE id_colaborador_fk = ?
+        GROUP BY anio
+        ORDER BY anio DESC";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $colaborador_id);
+$stmt->execute();
+$stmt->bind_result($anio, $total_anual, $meses_ano);
+while ($stmt->fetch()) {
+    $historial[] = [
+        'anio' => $anio,
+        'total' => $total_anual,
+        'meses' => $meses_ano,
+        'aguinaldo' => $meses_ano > 0 ? $total_anual / 12 : 0
+    ];
 }
-
-// Obtener años en los que no se ha generado aguinaldo
-function obtenerAniosSinAguinaldo() {
-    $anioActual = (int)date('Y');
-    $anios = [];
-    for ($i = 2020; $i <= $anioActual + 5; $i++) {
-        if (!aguinaldoGenerado($i)) {
-            $anios[] = $i;
-        }
-    }
-    return $anios;
-}
-
-// Verificar si el aguinaldo ya se ha generado para el año
-function aguinaldoGenerado($anio) {
-    global $conn;
-    $sql = "SELECT COUNT(*) AS total FROM aguinaldo WHERE YEAR(Fechainicio) = ?";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("i", $anio);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $row = $result->fetch_assoc();
-    return $row['total'] > 0;
-}
-
-// Calcular aguinaldos basado en los salarios netos de empleados activos
-function calcularAguinaldo($anio, $fechaFin = null) {
-    global $conn;
-    $fechaInicio = "$anio-01-01";
-    if (!$fechaFin) {
-        $fechaFin = "$anio-12-31";
-    }
-
-    $sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, 
-                   SUM(pl.Salario_neto) AS TotalSalariosNetos,
-                   (SUM(pl.Salario_neto) / 12) AS Aguinaldo
-            FROM persona p
-            JOIN colaborador c ON p.idPersona = c.Persona_idPersona
-            JOIN planillas pl ON p.idPersona = pl.Persona_idPersona
-            WHERE c.activo = 1 AND pl.Fecha_generacion BETWEEN ? AND ?
-                  AND pl.Salario_neto > 0 -- Solo considerar salarios netos mayores a cero
-            GROUP BY p.idPersona";
-
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ss", $fechaInicio, $fechaFin);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $aguinaldos = $result->fetch_all(MYSQLI_ASSOC);
-    return $aguinaldos;
-}
-
-// Guardar aguinaldo en la base de datos
-function guardarAguinaldo($anio) {
-    global $conn;
-    $aguinaldos = calcularAguinaldo($anio);
-
-    // Verificar si hay datos para generar el aguinaldo
-    if (count($aguinaldos) === 0) {
-        return false;
-    }
-
-    foreach ($aguinaldos as $aguinaldo) {
-        $idPersona = $aguinaldo['idPersona'];
-        $montoAguinaldo = $aguinaldo['Aguinaldo'];
-        $totalSalariosNetos = $aguinaldo['TotalSalariosNetos'];
-
-        $sql_colaborador = "SELECT idColaborador FROM colaborador WHERE Persona_idPersona = ?";
-        $stmt_colaborador = $conn->prepare($sql_colaborador);
-        $stmt_colaborador->bind_param("i", $idPersona);
-        $stmt_colaborador->execute();
-        $result_colaborador = $stmt_colaborador->get_result();
-        $colaborador = $result_colaborador->fetch_assoc();
-
-        // Verificar si el colaborador existe
-        if (!$colaborador) {
-            continue;
-        }
-
-        $idColaborador = $colaborador['idColaborador'];
-
-        $sql_insert = "INSERT INTO aguinaldo (Fechainicio, Fechafin, Total_de_salarios, Monto_aguinaldo, Salario, Colaborador_idColaborador)
-                       VALUES (?, ?, ?, ?, ?, ?)";
-        $fechaInicio = "$anio-01-01";
-        $fechaFin = "$anio-12-31";
-        $salario = $aguinaldo['Aguinaldo'];
-
-        $stmt_insert = $conn->prepare($sql_insert);
-        $stmt_insert->bind_param("ssdddi", $fechaInicio, $fechaFin, $totalSalariosNetos, $montoAguinaldo, $salario, $idColaborador);
-        $stmt_insert->execute();
-    }
-    return true;
-}
-
-// Obtener aguinaldos por año
-function obtenerAguinaldosPorAnio($anio) {
-    global $conn;
-    $sql = "SELECT a.*, p.Nombre, p.Apellido1, p.Cedula
-            FROM aguinaldo a
-            JOIN colaborador c ON a.Colaborador_idColaborador = c.idColaborador
-            JOIN persona p ON c.Persona_idPersona = p.idPersona
-            WHERE YEAR(a.Fechainicio) = ?";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("i", $anio);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $aguinaldos = $result->fetch_all(MYSQLI_ASSOC);
-    return $aguinaldos;
-}
-
-$anio_seleccionado = isset($_GET['anio']) ? (int)$_GET['anio'] : date('Y');
-$anios_historial = obtenerAniosAguinaldoGenerado();
-$aguinaldo_generado = aguinaldoGenerado($anio_seleccionado);
-
-if ($aguinaldo_generado) {
-    $aguinaldos = obtenerAguinaldosPorAnio($anio_seleccionado);
-} else {
-    $fecha_actual = date('Y-m-d');
-    $aguinaldos = calcularAguinaldo($anio_seleccionado, $fecha_actual);
-}
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generar_aguinaldo'])) {
-    $anioSeleccionado = (int)$_POST['anio_para_aguinaldo'];
-
-    if (!aguinaldoGenerado($anioSeleccionado)) {
-        $aguinaldos_a_generar = calcularAguinaldo($anioSeleccionado);
-        if (count($aguinaldos_a_generar) > 0) {
-            $resultado = guardarAguinaldo($anioSeleccionado);
-            if ($resultado) {
-                // Almacenar el mensaje en la sesión
-                $_SESSION['mensaje'] = '<div class="alert alert-success">Aguinaldo generado exitosamente para el año ' . $anioSeleccionado . '.</div>';
-                header('Location: ?anio=' . $anioSeleccionado);
-                exit();
-            } else {
-                $mensaje = '<div class="alert alert-danger">Error al generar el aguinaldo. Por favor, inténtelo de nuevo.</div>';
-            }
-        } else {
-            $mensaje = '<div class="alert alert-danger">No se encontraron datos para generar el aguinaldo en el año ' . $anioSeleccionado . '.</div>';
-        }
-    } else {
-        $mensaje = '<div class="alert alert-warning">El aguinaldo ya ha sido generado para el año ' . $anioSeleccionado . '.</div>';
-    }
-}
+$stmt->close();
 ?>
-
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Historial de Aguinaldos - Edginton S.A.</title>
+    <title>Mi Aguinaldo - Edginton S.A.</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        body { background: linear-gradient(135deg, #e3f2fd, #f7fcfe 100%);}
+        .aguinaldo-card { background:#fff; border-radius:2.3rem; box-shadow:0 6px 40px #23b6ff13; padding:2.6rem; margin:2rem 0;}
+        .aguinaldo-title { color:#15557a; font-weight:bold; font-size:2rem; text-align:center; margin-bottom:1.6rem;}
+        .aguinaldo-summary { background:linear-gradient(90deg,#f1fbff,#e2f5fd); border-radius:1.3rem; padding:1.4rem 2.1rem; margin-bottom:2.2rem; text-align:center;}
+        .aguinaldo-label { color:#0d89c2; font-weight:600; }
+        .aguinaldo-value { font-size:2.1rem; font-weight:700; color:#1493c2; }
+        .table-aguinaldo th { background: #eaf7fd; color: #1b6faa;}
+        .alert-info { border-radius:1.3rem; }
+        @media(max-width:650px){.aguinaldo-card{padding:1.1rem;}.aguinaldo-title{font-size:1.3rem;}}
+    </style>
 </head>
-
 <body>
-
-<?php include 'header.php'; ?>
-
-<div class="container mt-5">
-    <h1>Historial de Aguinaldos</h1>
-    <p class="text-center">Consulta y genera los aguinaldos de los colaboradores.</p>
-
-    <?php
-    // Mostrar el mensaje si existe en la sesión
-    if (isset($_SESSION['mensaje'])) {
-        echo $_SESSION['mensaje'];
-        unset($_SESSION['mensaje']);
-    }
-    ?>
-
-    <?php if (!empty($mensaje)): ?>
-        <?= $mensaje ?>
-    <?php endif; ?>
-
-    <div class="d-flex justify-content-end mb-3">
-        <?php if (count(obtenerAniosSinAguinaldo()) > 0): ?>
-            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalAguinaldo">Generar Aguinaldo</button>
-        <?php else: ?>
-            <button class="btn btn-primary" disabled>No hay años disponibles para generar aguinaldo</button>
-        <?php endif; ?>
-    </div>
-
-    <div class="table-responsive mb-5">
-        <h2>Aguinaldos del Año <?= $anio_seleccionado; ?></h2>
-        <?php if (!$aguinaldo_generado): ?>
-            <p class="text-muted">Las cantidades mostradas son acumuladas hasta la fecha actual.</p>
-        <?php endif; ?>
-        <table class="table table-bordered table-hover">
-            <thead class="table-dark">
-                <tr>
-                    <th>Nombre</th>
-                    <th>Cédula</th>
-                    <th>Monto Aguinaldo</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (count($aguinaldos) > 0): ?>
-                    <?php foreach ($aguinaldos as $aguinaldo): ?>
+<div class="container">
+    <div class="aguinaldo-card animate__animated animate__fadeInDown">
+        <div class="aguinaldo-title">
+            <i class="bi bi-gift"></i> Mi Aguinaldo Proporcional
+        </div>
+        <div class="aguinaldo-summary mb-4">
+            <div class="row justify-content-center">
+                <div class="col-12 col-md-4">
+                    <div class="aguinaldo-label mb-1"><i class="bi bi-calendar-event"></i> Período actual</div>
+                    <div><?= date('Y', strtotime('-1 month')) ?> - <?= date('Y') ?></div>
+                </div>
+                <div class="col-12 col-md-4">
+                    <div class="aguinaldo-label mb-1"><i class="bi bi-cash-coin"></i> Aguinaldo estimado</div>
+                    <div class="aguinaldo-value">₡<?= number_format($aguinaldo,2) ?></div>
+                </div>
+                <div class="col-12 col-md-4">
+                    <div class="aguinaldo-label mb-1"><i class="bi bi-bar-chart"></i> Meses laborados</div>
+                    <div><?= $meses_trabajados ?> / 12</div>
+                </div>
+            </div>
+        </div>
+        <div class="alert alert-info text-center mt-2 mb-4">
+            <i class="bi bi-info-circle"></i>
+            El aguinaldo se calcula sumando todos tus salarios brutos de los últimos 12 meses y dividiendo entre 12, según la ley costarricense.
+        </div>
+        <h5 class="mb-3 mt-4 text-primary"><i class="bi bi-clock-history"></i> Historial de Aguinaldos</h5>
+        <div class="table-responsive">
+            <table class="table table-aguinaldo table-bordered text-center">
+                <thead>
                     <tr>
-                        <td><?= htmlspecialchars($aguinaldo['Nombre'] . ' ' . $aguinaldo['Apellido1']); ?></td>
-                        <td><?= htmlspecialchars($aguinaldo['Cedula']); ?></td>
-                        <td>₡<?= number_format($aguinaldo['Monto_aguinaldo'] ?? $aguinaldo['Aguinaldo'], 2); ?></td>
+                        <th>Año</th>
+                        <th>Salario total (₡)</th>
+                        <th>Meses trabajados</th>
+                        <th>Aguinaldo recibido (₡)</th>
                     </tr>
-                    <?php endforeach; ?>
+                </thead>
+                <tbody>
+                <?php if ($historial): ?>
+                    <?php foreach ($historial as $row): ?>
+                        <tr>
+                            <td><?= $row['anio'] ?></td>
+                            <td><?= number_format($row['total'],2) ?></td>
+                            <td><?= $row['meses'] ?></td>
+                            <td><?= number_format($row['aguinaldo'],2) ?></td>
+                        </tr>
+                    <?php endforeach ?>
                 <?php else: ?>
-                    <tr>
-                        <td colspan="3" class="text-center">No hay aguinaldos calculados para este año.</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Historial de Aguinaldos -->
-    <h2>Historial de Aguinaldos Generados</h2>
-    <div class="table-responsive">
-        <table class="table table-bordered table-hover">
-            <thead class="table-dark">
-                <tr>
-                    <th>Año</th>
-                    <th>Acciones</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (count($anios_historial) > 0): ?>
-                    <?php foreach ($anios_historial as $anio): ?>
-                    <tr>
-                        <td><?= $anio; ?></td>
-                        <td>
-                            <a href="descargar_aguinaldo.php?anio=<?= $anio; ?>" class="btn btn-success btn-sm">Descargar Aguinaldo</a>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="2" class="text-center">No hay aguinaldos generados.</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<!-- Modal para seleccionar el año del aguinaldo -->
-<div class="modal fade" id="modalAguinaldo" tabindex="-1" aria-labelledby="modalAguinaldoLabel" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form method="post">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="modalAguinaldoLabel">Generar Aguinaldo</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <?php if (count(obtenerAniosSinAguinaldo()) > 0): ?>
-                        <div class="mb-3">
-                            <label for="anio_para_aguinaldo" class="form-label">Seleccione el año:</label>
-                            <select id="anio_para_aguinaldo" name="anio_para_aguinaldo" class="form-select">
-                                <?php foreach (obtenerAniosSinAguinaldo() as $anio): ?>
-                                    <option value="<?= $anio; ?>"><?= $anio; ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                    <?php else: ?>
-                        <p class="text-danger">No hay años disponibles para generar aguinaldo.</p>
-                    <?php endif; ?>
-                </div>
-                <div class="modal-footer">
-                    <?php if (count(obtenerAniosSinAguinaldo()) > 0): ?>
-                        <button type="submit" name="generar_aguinaldo" class="btn btn-primary">Generar</button>
-                    <?php else: ?>
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
-                    <?php endif; ?>
-                </div>
-            </form>
+                    <tr><td colspan="4" class="text-muted">No hay historial registrado.</td></tr>
+                <?php endif ?>
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
-
-<!-- Enlaces de JavaScript -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-
 </body>
 </html>
