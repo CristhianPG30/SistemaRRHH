@@ -29,9 +29,9 @@ $asistencia = ($result->num_rows > 0) ? $result->fetch_assoc() : null;
 $stmt->close();
 
 $marcoEntrada = ($asistencia && $asistencia['Entrada'] != NULL);
-$marcoSalida = ($asistencia && $asistencia['Salida'] != NULL);
+$marcoSalida = ($asistencia && $asistencia['Salida'] != NULL && $asistencia['Salida'] != '00:00:00'); // <-- Permitir remarcar si es 00:00:00
 
-// Procesar marcaje
+// Procesar marcaje de entrada
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
     $horaEntrada = date('H:i:s');
     if (!$marcoEntrada) {
@@ -49,34 +49,74 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
         $stmtEntrada->close();
     }
 }
+
+// Procesar marcaje de salida y cálculo de horas extra
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
     $horaSalida = date('H:i:s');
-    if ($marcoEntrada && !$marcoSalida) {
+    // Permitir remarcar si la salida es NULL o '00:00:00'
+    if ($marcoEntrada && (!$marcoSalida || ($asistencia['Salida'] == '00:00:00'))) {
         $stmtSalida = $conn->prepare("UPDATE control_de_asistencia SET Salida = ?, Abierto = 0 WHERE Persona_idPersona = ? AND Fecha = ?");
         $stmtSalida->bind_param("sis", $horaSalida, $persona_id, $fechaHoy);
 
         if ($stmtSalida->execute()) {
             $mensaje = "¡Salida marcada con éxito a las $horaSalida!";
             $tipoMensaje = 'success';
-            $marcoSalida = true;
+
+            // RECARGAR el registro de asistencia actualizado para tomar cambios manuales
+            $stmt = $conn->prepare("SELECT * FROM control_de_asistencia WHERE Persona_idPersona = ? AND Fecha = ?");
+            $stmt->bind_param("is", $persona_id, $fechaHoy);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            $asistencia = ($result->num_rows > 0) ? $result->fetch_assoc() : null;
+            $stmt->close();
+
             $asistencia['Salida'] = $horaSalida;
+
+            // --- LÓGICA DE HORAS EXTRA (8h + más de 30min)
             $horaEntradaTimestamp = strtotime($asistencia['Entrada']);
             $horaSalidaTimestamp = strtotime($horaSalida);
-            $horasTrabajadas = ($horaSalidaTimestamp - $horaEntradaTimestamp) / 3600;
-            if ($horasTrabajadas > 9) {
-                $horasExtra = $horasTrabajadas - 9;
-                $horasCompletas = floor($horasExtra);
-                if (($horasExtra - $horasCompletas) * 60 >= 30) $horasCompletas += 1;
-                if ($horasCompletas > 0) {
-                    $horaInicioExtra = date('H:i:s', strtotime('+9 hours', $horaEntradaTimestamp));
-                    $stmtHorasExtra = $conn->prepare("INSERT INTO horas_extra (Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Colaborador_idColaborador, Persona_idPersona) VALUES (?, ?, ?, ?, 'Horas extra automáticas', 'Pendiente', ?, ?)");
-                    $stmtHorasExtra->bind_param("ssdisi", $fechaHoy, $horaInicioExtra, $horaSalida, $horasCompletas, $colaborador_id, $persona_id);
-                    if ($stmtHorasExtra->execute()) {
-                        $mensaje .= " Se han registrado $horasCompletas horas extra para revisión.";
+            $totalSegundos = $horaSalidaTimestamp - $horaEntradaTimestamp;
+            $horasTrabajadas = $totalSegundos / 3600;
+
+            if ($horasTrabajadas > 8) {
+                $extraSegundos = $totalSegundos - (8 * 3600);
+                if ($extraSegundos > 1800) { // más de 30 min (1800s)
+                    $horasExtra = floor($extraSegundos / 3600);
+                    $minutosExtra = floor(($extraSegundos % 3600) / 60);
+
+                    // Redondea hacia arriba si los minutos extra son 30 o más
+                    $cantidad_horas = $horasExtra;
+                    if ($minutosExtra >= 30) {
+                        $cantidad_horas += 1;
                     }
-                    $stmtHorasExtra->close();
+
+                    if ($cantidad_horas > 0) {
+                        $horaInicioExtra = date('H:i:s', strtotime('+8 hours', $horaEntradaTimestamp));
+                        $observaciones = ''; // Campo requerido
+                        // Evitar duplicados: solo insertar si NO existe ya para hoy, la misma persona y mismo rango
+                        $stmtCheck = $conn->prepare("SELECT COUNT(*) FROM horas_extra WHERE Fecha = ? AND Persona_idPersona = ? AND hora_inicio = ? AND hora_fin = ?");
+                        $stmtCheck->bind_param("siss", $fechaHoy, $persona_id, $horaInicioExtra, $horaSalida);
+                        $stmtCheck->execute();
+                        $stmtCheck->bind_result($existe);
+                        $stmtCheck->fetch();
+                        $stmtCheck->close();
+
+                        if ($existe == 0) {
+                            $stmtHorasExtra = $conn->prepare("INSERT INTO horas_extra (Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Colaborador_idColaborador, Persona_idPersona, Observaciones) VALUES (?, ?, ?, ?, 'Horas extra automáticas', 'Pendiente', ?, ?, ?)");
+                            $stmtHorasExtra->bind_param("sssdiis", $fechaHoy, $horaInicioExtra, $horaSalida, $cantidad_horas, $colaborador_id, $persona_id, $observaciones);
+                            if ($stmtHorasExtra->execute()) {
+                                $mensaje .= " Se han registrado $cantidad_horas hora(s) extra como 'Pendiente de solicitud'.";
+                            } else {
+                                $mensaje .= " (Error al registrar horas extra: " . $stmtHorasExtra->error . ")";
+                            }
+                            $stmtHorasExtra->close();
+                        } else {
+                            $mensaje .= " (Horas extra ya estaban registradas para este rango horario.)";
+                        }
+                    }
                 }
             }
+            // --- FIN LÓGICA HORAS EXTRA
         } else {
             $mensaje = "Error al marcar la salida.";
             $tipoMensaje = 'danger';
@@ -189,7 +229,7 @@ $conn->close();
                     <div class="mt-4" style="font-size:1rem; color:#9096a6;">
                         <?php if ($marcoEntrada): ?>
                             <b>Entrada:</b> <?= htmlspecialchars($asistencia['Entrada']) ?>
-                            <?php if ($marcoSalida): ?>
+                            <?php if ($asistencia['Salida'] && $asistencia['Salida'] != '00:00:00'): ?>
                                 &nbsp; | &nbsp; <b>Salida:</b> <?= htmlspecialchars($asistencia['Salida']) ?>
                             <?php endif; ?>
                         <?php else: ?>

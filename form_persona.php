@@ -1,5 +1,4 @@
-<?php
-// Iniciar sesión de manera segura al principio de todo
+<?php 
 if (session_status() === PHP_SESSION_NONE) {
     session_start([
         'cookie_httponly' => true,
@@ -8,7 +7,6 @@ if (session_status() === PHP_SESSION_NONE) {
     ]);
 }
 
-// 1. SEGURIDAD Y PERMISOS
 if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
     header('Location: login.php');
     exit;
@@ -16,7 +14,6 @@ if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
 
 include 'db.php';
 
-// 2. GESTIÓN DE NOTIFICACIONES (MENSAJES FLASH)
 $flash_message = '';
 if (isset($_SESSION['flash_message'])) {
     $flash_message = "<div class='alert alert-{$_SESSION['flash_message']['type']} alert-dismissible fade show' role='alert'>
@@ -26,28 +23,26 @@ if (isset($_SESSION['flash_message'])) {
     unset($_SESSION['flash_message']);
 }
 
-// 3. INICIALIZACIÓN DE VARIABLES Y DATOS
 $is_edit_mode = false;
 $idPersona = ''; $nombre = ''; $apellido1 = ''; $apellido2 = ''; $cedula = ''; $fecha_nac = '';
 $correo_electronico = ''; $direccion_exacta = ''; $estado_civil_id = '';
 $nacionalidad_id = ''; $genero_id = ''; $telefono = ''; $departamento_id = '';
 $provincia_id = ''; $canton_id = ''; $distrito_id = '';
+$salario_bruto = '';
 $page_title = 'Agregar Nueva Persona';
 
-// Cargar datos para los menús desplegables
 $opciones_estado_civil = [1 => 'Soltero(a)', 2 => 'Casado(a)', 3 => 'Divorciado(a)', 4 => 'Viudo(a)', 5 => 'Unión Libre'];
 $opciones_nacionalidad = [1 => 'Costarricense', 2 => 'Extranjero Residente', 3 => 'Extranjero No Residente'];
 $opciones_genero = [1 => 'Masculino', 2 => 'Femenino', 3 => 'Prefiero no indicar'];
 $departamentos = $conn->query("SELECT idDepartamento, nombre FROM departamento JOIN estado_cat ON departamento.id_estado_fk = estado_cat.idEstado WHERE estado_cat.Descripcion = 'Activo' ORDER BY nombre");
 $jefes_activos = $conn->query("SELECT c.idColaborador, p.Nombre, p.Apellido1 FROM colaborador c JOIN persona p ON c.id_persona_fk = p.idPersona WHERE c.activo = 1 ORDER BY p.Nombre, p.Apellido1");
 
-// 4. LÓGICA DE EDICIÓN
 if (isset($_GET['id']) && !empty($_GET['id'])) {
     $is_edit_mode = true;
     $idPersona = intval($_GET['id']);
     $page_title = 'Editar Información de Persona';
     $sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula, p.Fecha_nac, p.id_estado_civil_fk, p.id_nacionalidad_fk, p.id_genero_cat_fk, 
-                   c.id_departamento_fk, d.Dir_exacta, d.Provincias_idProvincias, 
+                   c.id_departamento_fk, c.salario_bruto, d.Dir_exacta, d.Provincias_idProvincias, 
                    d.Cantones_idCanton, d.Distritos_idDistritos, t.numero AS Numero_de_Telefono, pc.Correo
             FROM persona p 
             LEFT JOIN colaborador c ON p.idPersona = c.id_persona_fk
@@ -71,17 +66,16 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
         $canton_id = $data['Cantones_idCanton'];
         $distrito_id = $data['Distritos_idDistritos'];
         $departamento_id = $data['id_departamento_fk'];
+        $salario_bruto = isset($data['salario_bruto']) ? $data['salario_bruto'] : '';
     }
     $stmt->close();
 }
 
-// 5. LÓGICA PARA PROCESAR EL FORMULARIO
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     session_regenerate_id(true);
     $idPersona = isset($_POST['idPersona']) ? intval($_POST['idPersona']) : 0;
     $is_edit_mode = ($idPersona > 0);
     
-    // Asignar variables desde POST
     $nombre = trim($_POST['nombre']);
     $apellido1 = trim($_POST['apellido1']);
     $apellido2 = trim($_POST['apellido2']);
@@ -98,6 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     $nacionalidad_post = intval($_POST['nacionalidad']);
     $genero_post = intval($_POST['genero']);
     $id_jefe_fk = isset($_POST['id_jefe_fk']) ? intval($_POST['id_jefe_fk']) : 0;
+    $salario_bruto_post = isset($_POST['salario_bruto']) ? floatval($_POST['salario_bruto']) : 0;
 
     $errors = [];
     if (empty($nombre) || !preg_match("/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/u", $nombre)) $errors[] = "El nombre es inválido.";
@@ -105,13 +100,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     if (empty($fecha_nac) || (new DateTime())->diff(new DateTime($fecha_nac))->y < 18) $errors[] = "La persona debe ser mayor de 18 años.";
     if (empty($provincia_id_post) || empty($canton_id_post) || empty($distrito_id_post)) $errors[] = "Debe seleccionar la ubicación completa.";
     if (!$is_edit_mode && empty($id_jefe_fk)) $errors[] = "Debe seleccionar un jefe.";
+    if ($salario_bruto_post < 0) $errors[] = "El salario bruto no puede ser negativo.";
 
     if (!empty($errors)) {
         $_SESSION['flash_message'] = ['type' => 'danger', 'message' => implode('<br>', $errors)];
     } else {
         $conn->begin_transaction();
         try {
-            // Lógica para Dirección
+            // Dirección
             $stmt_dir = $conn->prepare("SELECT id_direccion_fk FROM persona WHERE idPersona = ?");
             $stmt_dir->bind_param("i", $idPersona); $stmt_dir->execute(); $result_dir = $stmt_dir->get_result();
             $direccion_id = ($result_dir->num_rows > 0) ? $result_dir->fetch_assoc()['id_direccion_fk'] : null;
@@ -123,33 +119,32 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
             if (!$direccion_id) $direccion_id = $stmt->insert_id;
             $stmt->close();
             
-            // Lógica para Teléfono
+            // Teléfono
             $stmt_tel = $conn->prepare("SELECT id_Telefono FROM telefono WHERE numero = ?");
             $stmt_tel->bind_param("s", $telefono_numero); $stmt_tel->execute(); $tel_res = $stmt_tel->get_result();
             $telefono_id = ($tel_res->num_rows > 0) ? $tel_res->fetch_assoc()['id_Telefono'] : null;
             if(!$telefono_id && !empty($telefono_numero)) { $stmt_insert_tel = $conn->prepare("INSERT INTO telefono (numero) VALUES (?)"); $stmt_insert_tel->bind_param("s", $telefono_numero); $stmt_insert_tel->execute(); $telefono_id = $stmt_insert_tel->insert_id; $stmt_insert_tel->close(); }
             $stmt_tel->close();
             
-            // Lógica para Persona
+            // Persona
             if ($is_edit_mode) { $sql = "UPDATE persona SET Nombre=?, Apellido1=?, Apellido2=?, Cedula=?, Fecha_nac=?, id_direccion_fk=?, id_estado_civil_fk=?, id_nacionalidad_fk=?, id_genero_cat_fk=? WHERE idPersona=?"; $stmt = $conn->prepare($sql); $stmt->bind_param("sssssiiiii", $nombre, $apellido1, $apellido2, $cedula_post, $fecha_nac, $direccion_id, $estado_civil_post, $nacionalidad_post, $genero_post, $idPersona);
             } else { $sql = "INSERT INTO persona (Nombre, Apellido1, Apellido2, Cedula, Fecha_nac, id_direccion_fk, id_estado_civil_fk, id_nacionalidad_fk, id_genero_cat_fk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"; $stmt = $conn->prepare($sql); $stmt->bind_param("sssssiiii", $nombre, $apellido1, $apellido2, $cedula_post, $fecha_nac, $direccion_id, $estado_civil_post, $nacionalidad_post, $genero_post); }
             $stmt->execute();
             $current_persona_id = $is_edit_mode ? $idPersona : $stmt->insert_id;
             $stmt->close();
             
-            // Lógica para Mapeos
             $conn->execute_query("DELETE FROM persona_correos WHERE IdPersona_fk=?", [$current_persona_id]);
             $conn->execute_query("INSERT INTO persona_correos (Correo, IdPersona_fk) VALUES (?,?)", [$correo_electronico_post, $current_persona_id]);
             $conn->execute_query("DELETE FROM persona_telefonos WHERE id_persona_fk=?", [$current_persona_id]);
             if($telefono_id) $conn->execute_query("INSERT INTO persona_telefonos (id_persona_fk, id_telefono_fk) VALUES (?,?)", [$current_persona_id, $telefono_id]);
 
-            // Lógica para Colaborador
+            // Colaborador (AQUÍ ESTÁ EL CAMBIO IMPORTANTE PARA EL SALARIO)
             $stmt_col_check = $conn->prepare("SELECT idColaborador FROM colaborador WHERE id_persona_fk = ?");
             $stmt_col_check->bind_param("i", $current_persona_id); $stmt_col_check->execute(); $col_res = $stmt_col_check->get_result();
             if ($col_res->num_rows > 0) {
-                $conn->execute_query("UPDATE colaborador SET id_departamento_fk=? WHERE id_persona_fk=?", [$departamento_id_post, $current_persona_id]);
+                $conn->execute_query("UPDATE colaborador SET id_departamento_fk=?, salario_bruto=? WHERE id_persona_fk=?", [$departamento_id_post, $salario_bruto_post, $current_persona_id]);
             } else {
-                $conn->execute_query("INSERT INTO colaborador (id_persona_fk, activo, fecha_ingreso, id_departamento_fk, id_jefe_fk) VALUES (?, 1, NOW(), ?, ?)", [$current_persona_id, $departamento_id_post, $id_jefe_fk]);
+                $conn->execute_query("INSERT INTO colaborador (id_persona_fk, activo, fecha_ingreso, id_departamento_fk, id_jefe_fk, salario_bruto) VALUES (?, 1, NOW(), ?, ?, ?)", [$current_persona_id, $departamento_id_post, $id_jefe_fk, $salario_bruto_post]);
             }
             $stmt_col_check->close();
             
@@ -257,6 +252,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
                         <?php if (!$is_edit_mode): ?>
                         <div class="col-md-6 mb-3"><label for="id_jefe_fk" class="form-label required">Jefe Directo</label><select class="form-select" name="id_jefe_fk" required><option value="">Seleccione...</option><?php if($jefes_activos && $jefes_activos->num_rows > 0): mysqli_data_seek($jefes_activos, 0); while ($jefe = $jefes_activos->fetch_assoc()): ?><option value="<?= $jefe['idColaborador']; ?>"><?= htmlspecialchars($jefe['Nombre'] . ' ' . $jefe['Apellido1']); ?></option><?php endwhile; endif; ?></select></div>
                         <?php endif; ?>
+                        <div class="col-md-6 mb-3">
+                            <label for="salario_bruto" class="form-label required">Salario Bruto (₡)</label>
+                            <input type="number" step="0.01" min="0" class="form-control" name="salario_bruto" value="<?= htmlspecialchars($salario_bruto); ?>" required>
+                        </div>
                         <div class="col-md-4 mb-3"><label for="estado_civil" class="form-label required">Estado Civil</label><select class="form-select" name="estado_civil" required><option value="">Seleccione...</option><?php foreach ($opciones_estado_civil as $id => $desc): ?><option value="<?= $id; ?>" <?= ($estado_civil_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
                         <div class="col-md-4 mb-3"><label for="nacionalidad" class="form-label required">Nacionalidad</label><select class="form-select" name="nacionalidad" required><option value="">Seleccione...</option><?php foreach ($opciones_nacionalidad as $id => $desc): ?><option value="<?= $id; ?>" <?= ($nacionalidad_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
                         <div class="col-md-4 mb-3"><label for="genero" class="form-label required">Género</label><select class="form-select" name="genero" required><option value="">Seleccione...</option><?php foreach ($opciones_genero as $id => $desc): ?><option value="<?= $id; ?>" <?= ($genero_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
@@ -271,8 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     </div>
 
     <script>
-        // Tu script de JavaScript para el stepper y los selects de ubicación
-        // No necesita cambios, pero lo incluyo para que el archivo sea completo.
+        // JS stepper y selects ubicación (igual que tu versión, no cambia)
         document.addEventListener('DOMContentLoaded', function () {
             const stepper = document.querySelector('.form-stepper');
             const formSteps = document.querySelectorAll('.form-step');
@@ -358,7 +356,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
                 populateSelect(cantonSelect, cantones, initialData.canton);
                  if (initialData.canton) {
                     cantonSelect.dispatchEvent(new Event('change'));
-                    initialData.canton = null; // Evitar que se vuelva a seleccionar
+                    initialData.canton = null;
                 }
             });
 
@@ -366,7 +364,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
                 const distritos = ubicacionesData.distritos[provinciaSelect.value]?.[cantonSelect.value] || {};
                 populateSelect(distritoSelect, distritos, initialData.distrito);
                 if (initialData.distrito) {
-                    initialData.distrito = null; // Evitar que se vuelva a seleccionar
+                    initialData.distrito = null;
                 }
             });
 

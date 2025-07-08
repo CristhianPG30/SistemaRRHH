@@ -1,4 +1,4 @@
-<?php 
+<?php  
 session_start();
 if (!isset($_SESSION['username'])) {
     header('Location: login.php');
@@ -6,12 +6,10 @@ if (!isset($_SESSION['username'])) {
 }
 $username = $_SESSION['username'];
 
-include 'db.php'; // Conexión a la base de datos
+include 'db.php';
 
-// Inicializar mensaje
 $mensaje = '';
 
-// Definir nombres de los meses en español
 $meses_espanol = [
     1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril', 5 => 'Mayo', 6 => 'Junio',
     7 => 'Julio', 8 => 'Agosto', 9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre'
@@ -20,11 +18,9 @@ $meses_espanol = [
 function obtenerDiasFeriados($anio) {
     return ["$anio-01-01", "$anio-04-11", "$anio-05-01", "$anio-07-25", "$anio-08-15", "$anio-09-15", "$anio-12-25"];
 }
-
 function esDiaFeriado($fecha, $anio_actual) {
     return in_array($fecha, obtenerDiasFeriados($anio_actual));
 }
-
 function calcularDiasLaborales($anio, $mes) {
     $dias_laborales = 0;
     $dias_en_mes = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
@@ -40,10 +36,8 @@ function calcularDiasLaborales($anio, $mes) {
 }
 
 $horas_diarias = 9;
-
 $config_path = __DIR__ . "/js/configuracion.json";
 $configuracion = json_decode(file_get_contents($config_path), true);
-$tarifa_hora_extra = $configuracion['tarifa_hora_extra'];
 
 $tax_brackets_path = "js/tramos_impuesto_renta.json";
 $tax_brackets = json_decode(file_get_contents($tax_brackets_path), true);
@@ -69,14 +63,12 @@ function planillaYaGenerada($anio, $mes) {
     $stmt->close();
     return $row['cantidad'] > 0;
 }
-
 function esMesFuturo($anio, $mes) {
     $fecha_seleccionada = DateTime::createFromFormat('Y-n-d', "$anio-$mes-01")->setTime(0, 0);
     $fecha_actual = new DateTime('first day of this month');
     $fecha_actual->setTime(0,0);
     return $fecha_seleccionada > $fecha_actual;
 }
-
 function esMesPasado($anio, $mes) {
     $fecha_seleccionada = DateTime::createFromFormat('Y-n-d', "$anio-$mes-01")->setTime(0, 0);
     $fecha_actual = new DateTime('first day of this month');
@@ -97,30 +89,21 @@ function calcularImpuestoRenta($salario) {
     }
     return $impuesto;
 }
-
-// CORRECCIÓN FINAL: La función ahora interpreta la columna 'Descripcion' para obtener el nombre y el porcentaje.
 function calcularDeduccionesGenerales($salario_bruto_calculado) {
     global $conn;
     $deducciones_calculadas = [];
     $total_deducciones = 0;
-
-    // Se asume que la tabla es 'tipo_deduccion_cat' como en configuracion.php
     $sql = "SELECT Descripcion FROM tipo_deduccion_cat";
     $result = $conn->query($sql);
 
     if ($result) {
         while ($row = $result->fetch_assoc()) {
-            // Separar el nombre del porcentaje usando el delimitador ':'
             $parts = explode(':', $row['Descripcion']);
-            
-            // Verificar si el formato es "Nombre:Porcentaje"
             if (count($parts) === 2 && is_numeric(trim($parts[1]))) {
                 $nombre_deduccion = trim($parts[0]);
                 $porcentaje = floatval(trim($parts[1]));
-
                 $monto = $salario_bruto_calculado * ($porcentaje / 100);
                 $total_deducciones += $monto;
-
                 $deducciones_calculadas[] = [
                     'descripcion' => $nombre_deduccion,
                     'porcentaje' => $porcentaje,
@@ -129,11 +112,8 @@ function calcularDeduccionesGenerales($salario_bruto_calculado) {
             }
         }
     }
-
     return ['total' => $total_deducciones, 'detalles' => $deducciones_calculadas];
 }
-
-
 function obtenerCategoriasSalariales() {
     global $conn;
     $result = $conn->query("SELECT Cantidad_Salarial_Tope, idCategoria_salarial FROM categoria_salarial ORDER BY Cantidad_Salarial_Tope ASC");
@@ -141,7 +121,6 @@ function obtenerCategoriasSalariales() {
     if ($result) { while ($row = $result->fetch_assoc()) { $categorias[] = $row; } }
     return $categorias;
 }
-
 function determinarCategoriaSalarial($salario_bruto, $categorias) {
     foreach ($categorias as $categoria) {
         if ($salario_bruto <= $categoria['Cantidad_Salarial_Tope']) {
@@ -150,19 +129,15 @@ function determinarCategoriaSalarial($salario_bruto, $categorias) {
     }
     return !empty($categorias) ? end($categorias)['idCategoria_salarial'] : null;
 }
-
 function guardarPlanilla($planilla, $anio_actual, $mes_actual) {
     global $conn;
     foreach ($planilla as $colaborador) {
         $categoria_id = $colaborador['id_categoria_salarial_fk'];
         if ($categoria_id === NULL) continue;
-
         $sql = "INSERT INTO planillas (id_colaborador_fk, fecha_generacion, id_categoria_salarial_fk, salario_bruto, total_horas_extra, total_otros_ingresos, total_deducciones, salario_neto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-        
         $fecha_generacion = sprintf("%s-%02d-01", $anio_actual, $mes_actual);
         $total_otros_ingresos = $colaborador['Monto_vacaciones'] + $colaborador['Monto_incapacidad'];
         $total_deducciones = $colaborador['Deducciones_generales'] + $colaborador['Impuesto_renta'];
-        
         $stmt = $conn->prepare($sql);
         $stmt->bind_param("isiddddd", 
             $colaborador['idColaborador'], $fecha_generacion, $categoria_id, 
@@ -174,36 +149,34 @@ function guardarPlanilla($planilla, $anio_actual, $mes_actual) {
     }
 }
 
+// === LÓGICA DE PLANILLA (SOLO PAGA LO GANADO, NO DESCUENTA POR AUSENCIAS) ===
 function obtenerPlanilla($anio_actual, $mes_actual) {
-    global $conn, $dias_laborales_mes, $horas_diarias, $tarifa_hora_extra;
+    global $conn, $dias_laborales_mes, $horas_diarias;
 
     if (empty($mes_actual) || empty($anio_actual) || $dias_laborales_mes <= 0) return [];
     
-    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, c.idColaborador FROM colaborador c JOIN persona p ON c.id_persona_fk = p.idPersona WHERE c.activo = 1";
-    
+    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, c.idColaborador, c.salario_bruto
+                          FROM colaborador c
+                          JOIN persona p ON c.id_persona_fk = p.idPersona
+                          WHERE c.activo = 1";
     $result_colaboradores = $conn->query($sql_colaboradores);
     if (!$result_colaboradores) die("Error al obtener los colaboradores: " . htmlspecialchars($conn->error));
-    
     $colaboradores = $result_colaboradores->fetch_all(MYSQLI_ASSOC);
+
     $categorias_salariales = obtenerCategoriasSalariales();
 
     foreach ($colaboradores as &$colaborador) {
         $idColaborador = $colaborador['idColaborador'];
         $idPersona = $colaborador['idPersona'];
+        $salario_bruto = floatval($colaborador['salario_bruto']);
 
-        $stmt_salario = $conn->prepare("SELECT salario_bruto FROM planillas WHERE id_colaborador_fk = ? ORDER BY fecha_generacion DESC LIMIT 1");
-        $stmt_salario->bind_param("i", $idColaborador);
-        $stmt_salario->execute();
-        $salario_data = $stmt_salario->get_result()->fetch_assoc();
-        $stmt_salario->close();
-        
-        $salario_bruto = $salario_data['salario_bruto'] ?? 0.00;
         $colaborador['Salario_bruto'] = $salario_bruto;
-        
         $colaborador['id_categoria_salarial_fk'] = determinarCategoriaSalarial($salario_bruto, $categorias_salariales);
-        
+
         $salario_por_hora = ($dias_laborales_mes > 0 && $horas_diarias > 0) ? ($salario_bruto / ($dias_laborales_mes * $horas_diarias)) : 0;
-        
+        $salario_diario = ($dias_laborales_mes > 0) ? ($salario_bruto / $dias_laborales_mes) : 0;
+
+        // Horas trabajadas
         $stmt_asistencia = $conn->prepare("SELECT Entrada, Salida FROM control_de_asistencia WHERE Persona_idPersona = ? AND MONTH(Fecha) = ? AND YEAR(Fecha) = ?");
         $stmt_asistencia->bind_param("iii", $idPersona, $mes_actual, $anio_actual);
         $stmt_asistencia->execute();
@@ -211,27 +184,26 @@ function obtenerPlanilla($anio_actual, $mes_actual) {
         $total_horas_trabajadas = 0;
         while ($asistencia = $asistencia_result->fetch_assoc()) {
             if ($asistencia['Entrada'] && $asistencia['Salida']) {
-                $intervalo = (new DateTime($asistencia['Salida']))->diff(new DateTime($asistencia['Entrada']));
+                $inicio = new DateTime($asistencia['Entrada']);
+                $fin = new DateTime($asistencia['Salida']);
+                $intervalo = $fin->diff($inicio);
                 $total_horas_trabajadas += $intervalo->h + ($intervalo->i / 60);
             }
         }
         $stmt_asistencia->close();
-        
-        $horas_esperadas = $dias_laborales_mes * $horas_diarias;
-        $horas_no_trabajadas = max(0, $horas_esperadas - $total_horas_trabajadas);
-        $descuento_por_horas_no_trabajadas = $horas_no_trabajadas * $salario_por_hora;
-        
-        $stmt_he = $conn->prepare("SELECT SUM(TIME_TO_SEC(cantidad_horas) / 3600) AS Total_horas_extra FROM horas_extra WHERE estado = 'Aprobado' AND Colaborador_idColaborador = ? AND MONTH(Fecha) = ? AND YEAR(Fecha) = ?");
+
+        // Horas extra APROBADAS
+        $stmt_he = $conn->prepare("SELECT SUM(cantidad_horas) AS Total_horas_extra FROM horas_extra WHERE estado = 'Aprobado' AND Colaborador_idColaborador = ? AND MONTH(Fecha) = ? AND YEAR(Fecha) = ?");
         $stmt_he->bind_param("iii", $idColaborador, $mes_actual, $anio_actual);
         $stmt_he->execute();
         $he_data = $stmt_he->get_result()->fetch_assoc();
-        $total_horas_extra = $he_data['Total_horas_extra'] ?? 0;
-        $pago_horas_extra = $total_horas_extra * $tarifa_hora_extra;
+        $total_horas_extra = floatval($he_data['Total_horas_extra'] ?? 0);
         $stmt_he->close();
-        
-        $salario_diario = ($dias_laborales_mes > 0) ? $salario_bruto / $dias_laborales_mes : 0;
-        $monto_vacaciones = 0; $dias_vacaciones = 0; $monto_incapacidad = 0; $dias_incapacidad = 0;
-        
+
+        $tarifa_hora_extra_real = $salario_por_hora * 1.5;
+        $pago_horas_extra = $total_horas_extra * $tarifa_hora_extra_real;
+
+        // Permisos aprobados (vacaciones/incapacidad)
         $sql_permisos = "SELECT tpc.Descripcion AS TipoPermiso, DATEDIFF(p.fecha_fin, p.fecha_inicio) + 1 AS dias
                          FROM permisos p
                          JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
@@ -239,11 +211,12 @@ function obtenerPlanilla($anio_actual, $mes_actual) {
                          WHERE ec.Descripcion = 'Aprobado'
                          AND p.id_colaborador_fk = ?
                          AND MONTH(p.fecha_inicio) = ? AND YEAR(p.fecha_inicio) = ?";
-
         $stmt_permisos = $conn->prepare($sql_permisos);
         $stmt_permisos->bind_param("iii", $idColaborador, $mes_actual, $anio_actual);
         $stmt_permisos->execute();
         $permisos_result = $stmt_permisos->get_result();
+        $dias_vacaciones = 0;
+        $dias_incapacidad = 0;
         while($permiso = $permisos_result->fetch_assoc()){
             if(strtolower($permiso['TipoPermiso']) == 'vacaciones'){ $dias_vacaciones += $permiso['dias']; }
             elseif(strtolower($permiso['TipoPermiso']) == 'enfermedad'){ $dias_incapacidad += $permiso['dias']; }
@@ -251,20 +224,29 @@ function obtenerPlanilla($anio_actual, $mes_actual) {
         $monto_vacaciones = $dias_vacaciones * $salario_diario;
         $monto_incapacidad = $dias_incapacidad * $salario_diario;
         $stmt_permisos->close();
-        
-        $salario_total_antes_deducciones = $salario_bruto + $pago_horas_extra - $descuento_por_horas_no_trabajadas + $monto_vacaciones + $monto_incapacidad;
+
+        // Salario proporcional (según horas trabajadas)
+        $salario_proporcional = $salario_por_hora * $total_horas_trabajadas;
+
+        // Cálculo bruto antes de deducciones (NO SE DESCUNTA POR AUSENCIA)
+        $salario_total_antes_deducciones = $salario_proporcional + $pago_horas_extra + $monto_vacaciones + $monto_incapacidad;
         $deducciones = calcularDeduccionesGenerales($salario_total_antes_deducciones);
         $deducciones_generales = $deducciones['total'];
         $impuesto_renta = calcularImpuestoRenta($salario_total_antes_deducciones);
         $salario_neto = $salario_total_antes_deducciones - $deducciones_generales - $impuesto_renta;
 
         $colaborador = array_merge($colaborador, [
-            'Horas_trabajadas' => $total_horas_trabajadas, 'Horas_extra' => $pago_horas_extra,
-            'Total_horas_extra' => $total_horas_extra, 'Horas_no_trabajadas' => $horas_no_trabajadas,
-            'Descuento_por_horas_no_trabajadas' => $descuento_por_horas_no_trabajadas, 'Monto_vacaciones' => $monto_vacaciones,
-            'Dias_vacaciones' => $dias_vacaciones, 'Monto_incapacidad' => $monto_incapacidad, 'Dias_incapacidad' => $dias_incapacidad,
-            'Impuesto_renta' => $impuesto_renta, 'Deducciones_generales' => $deducciones_generales,
-            'Deducciones_detalles' => $deducciones['detalles'], 'Salario_neto' => max(0, $salario_neto)
+            'Horas_trabajadas' => $total_horas_trabajadas,
+            'Horas_extra' => $pago_horas_extra,
+            'Total_horas_extra' => $total_horas_extra,
+            'Monto_vacaciones' => $monto_vacaciones,
+            'Dias_vacaciones' => $dias_vacaciones,
+            'Monto_incapacidad' => $monto_incapacidad,
+            'Dias_incapacidad' => $dias_incapacidad,
+            'Impuesto_renta' => $impuesto_renta,
+            'Deducciones_generales' => $deducciones_generales,
+            'Deducciones_detalles' => $deducciones['detalles'],
+            'Salario_neto' => max(0, $salario_neto)
         ]);
     }
     return $colaboradores;
@@ -291,7 +273,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generar_planilla'])) 
 }
 $historial_planillas = $conn->query("SELECT DISTINCT YEAR(fecha_generacion) as anio, MONTH(fecha_generacion) as mes FROM planillas ORDER BY anio DESC, mes DESC")->fetch_all(MYSQLI_ASSOC);
 
-// --- LÓGICA PARA EL REDISEÑO (SE MANTIENE IGUAL) ---
 $total_neto = 0;
 $total_deducciones = 0;
 $total_colaboradores = count($planilla);
@@ -463,9 +444,8 @@ foreach ($planilla as $p) {
                  <p><strong>Pago Horas Extra:</strong> + ₡<?= number_format($colaborador['Horas_extra'], 2); ?> (<?= number_format($colaborador['Total_horas_extra'], 2); ?> horas)</p>
                  <p><strong>Pago Vacaciones:</strong> + ₡<?= number_format($colaborador['Monto_vacaciones'], 2); ?> (<?= $colaborador['Dias_vacaciones']; ?> días)</p>
                  <p><strong>Reconocimiento Incapacidades:</strong> + ₡<?= number_format($colaborador['Monto_incapacidad'], 2); ?> (<?= $colaborador['Dias_incapacidad']; ?> días)</p>
-                 <p><strong>Descuento por Ausencias:</strong> - ₡<?= number_format($colaborador['Descuento_por_horas_no_trabajadas'], 2); ?> (<?= number_format($colaborador['Horas_no_trabajadas'], 2); ?> horas)</p>
                  <hr>
-                 <p><strong>Salario Bruto Calculado:</strong> ₡<?= number_format($colaborador['Salario_bruto'] + $colaborador['Horas_extra'] + $colaborador['Monto_vacaciones'] + $colaborador['Monto_incapacidad'] - $colaborador['Descuento_por_horas_no_trabajadas'], 2); ?></p>
+                 <p><strong>Salario Bruto Calculado:</strong> ₡<?= number_format($colaborador['Salario_neto'] + $colaborador['Deducciones_generales'] + $colaborador['Impuesto_renta'], 2); ?></p>
                  <hr>
                  <p><strong>Deducciones de Ley:</strong></p>
                  <ul>
