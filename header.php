@@ -161,7 +161,7 @@ function rolName($rol) {
             <a class="nav-link <?= isActive('reporte_equipo.php') ?>" href="reporte_equipo.php"><i class="bi bi-clipboard-data"></i> Reportes de Equipo</a>
         <?php elseif ($rol == 4): // RECURSOS HUMANOS ?>
             <a class="nav-link <?= isActive('index_rrhh.php') ?>" href="index_rrhh.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
-            <a class="nav-link <?= isActive('empleados.php') ?>" href="empleados.php"><i class="bi bi-person-lines-fill"></i> Empleados</a>
+            <a class="nav-link <?= isActive('equipo.php') ?>" href="equipo.php"><i class="bi bi-person-lines-fill"></i> Empleados</a>
             <a class="nav-link <?= isActive('nóminas.php') ?>" href="nóminas.php"><i class="bi bi-calculator"></i> Planillas</a>
             <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Horas Extra</a>
             <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Permisos</a>
