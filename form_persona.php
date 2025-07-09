@@ -7,12 +7,13 @@ if (session_status() === PHP_SESSION_NONE) {
     ]);
 }
 
-if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
+include 'db.php';
+
+// --- CORRECCIÓN: Permitir acceso a Administrador (1) y Recursos Humanos (4) ---
+if (!isset($_SESSION['username']) || !in_array($_SESSION['rol'], [1, 4])) {
     header('Location: login.php');
     exit;
 }
-
-include 'db.php';
 
 $flash_message = '';
 if (isset($_SESSION['flash_message'])) {
@@ -138,7 +139,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
             $conn->execute_query("DELETE FROM persona_telefonos WHERE id_persona_fk=?", [$current_persona_id]);
             if($telefono_id) $conn->execute_query("INSERT INTO persona_telefonos (id_persona_fk, id_telefono_fk) VALUES (?,?)", [$current_persona_id, $telefono_id]);
 
-            // Colaborador (AQUÍ ESTÁ EL CAMBIO IMPORTANTE PARA EL SALARIO)
+            // Colaborador
             $stmt_col_check = $conn->prepare("SELECT idColaborador FROM colaborador WHERE id_persona_fk = ?");
             $stmt_col_check->bind_param("i", $current_persona_id); $stmt_col_check->execute(); $col_res = $stmt_col_check->get_result();
             if ($col_res->num_rows > 0) {
@@ -172,7 +173,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Poppins', sans-serif; background-color: #f4f7fc; }
-        .main-container { max-width: 900px; }
+        .main-content { margin-left: 280px; padding: 2rem; }
         .form-stepper { display: flex; justify-content: space-between; width: 100%; margin: 2rem 0; }
         .form-stepper .step { display: flex; flex-direction: column; align-items: center; position: relative; flex-grow: 1; cursor: pointer; }
         .form-stepper .step .step-circle { width: 40px; height: 40px; border-radius: 50%; background-color: #d1d9e6; color: #858796; display: flex; align-items: center; justify-content: center; font-weight: 600; transition: all 0.3s; z-index: 2; border: 3px solid #d1d9e6; }
@@ -195,82 +196,83 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
 <body>
     <?php include 'header.php'; ?>
 
-    <div class="container main-container my-4">
-        <div class="text-center mb-4">
-            <h1 class="h3 mb-1 text-gray-800" style="font-weight: 600;"><?= htmlspecialchars($page_title); ?></h1>
-            <p class="text-muted">Completa la información en cada paso para continuar.</p>
-        </div>
-        <?= $flash_message ?>
-
-        <div class="form-stepper">
-            <div class="step active" data-step-target="1"><div class="step-circle">1</div><div class="step-title">Personal</div></div>
-            <div class="step" data-step-target="2"><div class="step-circle">2</div><div class="step-title">Contacto</div></div>
-            <div class="step" data-step-target="3"><div class="step-circle">3</div><div class="step-title">Laboral</div></div>
-        </div>
-
-        <form id="personaForm" action="form_persona.php<?= $is_edit_mode ? '?id='.$idPersona : '' ?>" method="POST" novalidate>
-            <input type="hidden" name="idPersona" value="<?= htmlspecialchars($idPersona); ?>">
-            
-            <div class="card p-4">
-                <div class="form-step active" data-step-content="1">
-                    <h5 class="mb-4">Paso 1: Información Personal</h5>
-                    <div class="row">
-                        <div class="col-md-4 mb-3"><label for="nombre" class="form-label required">Nombre</label><input type="text" class="form-control" name="nombre" value="<?= htmlspecialchars($nombre); ?>" required></div>
-                        <div class="col-md-4 mb-3"><label for="apellido1" class="form-label required">Primer Apellido</label><input type="text" class="form-control" name="apellido1" value="<?= htmlspecialchars($apellido1); ?>" required></div>
-                        <div class="col-md-4 mb-3"><label for="apellido2" class="form-label required">Segundo Apellido</label><input type="text" class="form-control" name="apellido2" value="<?= htmlspecialchars($apellido2); ?>" required></div>
-                        <div class="col-md-6 mb-3"><label for="cedula" class="form-label required">Identificación</label><input type="text" class="form-control" name="cedula" value="<?= htmlspecialchars($cedula); ?>" required></div>
-                        <div class="col-md-6 mb-3"><label for="fecha_nac" class="form-label required">Fecha de Nacimiento</label><input type="date" class="form-control" name="fecha_nac" value="<?= htmlspecialchars($fecha_nac); ?>" required></div>
-                    </div>
-                     <div class="d-flex justify-content-end mt-3">
-                        <a href="personas.php" class="btn btn-light me-2">Cancelar</a>
-                        <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
-                    </div>
-                </div>
-
-                <div class="form-step" data-step-content="2">
-                    <h5 class="mb-4">Paso 2: Contacto y Ubicación</h5>
-                    <div class="row">
-                        <div class="col-md-6 mb-3"><label for="correo_electronico" class="form-label required">Correo Electrónico</label><input type="email" class="form-control" name="correo_electronico" value="<?= htmlspecialchars($correo_electronico); ?>" required></div>
-                        <div class="col-md-6 mb-3"><label for="telefono" class="form-label required">Teléfono</label><input type="text" class="form-control" name="telefono" placeholder="0000-0000" value="<?= htmlspecialchars($telefono); ?>" required></div>
-                    </div>
-                    <div class="row">
-                        <div class="col-md-4 mb-3"><label for="provincia" class="form-label required">Provincia</label><select class="form-select" id="provincia" name="provincia" required></select></div>
-                        <div class="col-md-4 mb-3"><label for="canton" class="form-label required">Cantón</label><select class="form-select" id="canton" name="canton" required></select></div>
-                        <div class="col-md-4 mb-3"><label for="distrito" class="form-label required">Distrito</label><select class="form-select" id="distrito" name="distrito" required></select></div>
-                    </div>
-                    <div class="mb-3"><label for="direccion_exacta" class="form-label required">Dirección Exacta</label><textarea class="form-control" name="direccion_exacta" rows="2" required><?= htmlspecialchars($direccion_exacta); ?></textarea></div>
-                    <div class="d-flex justify-content-between mt-3">
-                        <button type="button" class="btn btn-secondary" data-nav="prev"><i class="bi bi-arrow-left"></i> Anterior</button>
-                        <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
-                    </div>
-                </div>
-
-                <div class="form-step" data-step-content="3">
-                     <h5 class="mb-4">Paso 3: Datos Laborales y Adicionales</h5>
-                    <div class="row">
-                        <div class="col-md-6 mb-3"><label for="departamento" class="form-label required">Departamento</label><select class="form-select" name="departamento" required><option value="">Seleccione...</option><?php if($departamentos && $departamentos->num_rows > 0) { mysqli_data_seek($departamentos, 0); while ($dept = $departamentos->fetch_assoc()): ?><option value="<?= $dept['idDepartamento']; ?>" <?= ($departamento_id == $dept['idDepartamento']) ? 'selected' : ''; ?>><?= htmlspecialchars($dept['nombre']); ?></option><?php endwhile; } ?></select></div>
-                        <?php if (!$is_edit_mode): ?>
-                        <div class="col-md-6 mb-3"><label for="id_jefe_fk" class="form-label required">Jefe Directo</label><select class="form-select" name="id_jefe_fk" required><option value="">Seleccione...</option><?php if($jefes_activos && $jefes_activos->num_rows > 0): mysqli_data_seek($jefes_activos, 0); while ($jefe = $jefes_activos->fetch_assoc()): ?><option value="<?= $jefe['idColaborador']; ?>"><?= htmlspecialchars($jefe['Nombre'] . ' ' . $jefe['Apellido1']); ?></option><?php endwhile; endif; ?></select></div>
-                        <?php endif; ?>
-                        <div class="col-md-6 mb-3">
-                            <label for="salario_bruto" class="form-label required">Salario Bruto (₡)</label>
-                            <input type="number" step="0.01" min="0" class="form-control" name="salario_bruto" value="<?= htmlspecialchars($salario_bruto); ?>" required>
-                        </div>
-                        <div class="col-md-4 mb-3"><label for="estado_civil" class="form-label required">Estado Civil</label><select class="form-select" name="estado_civil" required><option value="">Seleccione...</option><?php foreach ($opciones_estado_civil as $id => $desc): ?><option value="<?= $id; ?>" <?= ($estado_civil_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
-                        <div class="col-md-4 mb-3"><label for="nacionalidad" class="form-label required">Nacionalidad</label><select class="form-select" name="nacionalidad" required><option value="">Seleccione...</option><?php foreach ($opciones_nacionalidad as $id => $desc): ?><option value="<?= $id; ?>" <?= ($nacionalidad_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
-                        <div class="col-md-4 mb-3"><label for="genero" class="form-label required">Género</label><select class="form-select" name="genero" required><option value="">Seleccione...</option><?php foreach ($opciones_genero as $id => $desc): ?><option value="<?= $id; ?>" <?= ($genero_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
-                    </div>
-                     <div class="d-flex justify-content-between mt-3">
-                        <button type="button" class="btn btn-secondary" data-nav="prev"><i class="bi bi-arrow-left"></i> Anterior</button>
-                        <button type="submit" class="btn btn-primary"><i class="bi bi-save-fill me-2"></i><?= $is_edit_mode ? 'Actualizar Persona' : 'Guardar Persona'; ?></button>
-                    </div>
-                </div>
+    <main class="main-content">
+        <div class="container my-4">
+            <div class="text-center mb-4">
+                <h1 class="h3 mb-1 text-gray-800" style="font-weight: 600;"><?= htmlspecialchars($page_title); ?></h1>
+                <p class="text-muted">Completa la información en cada paso para continuar.</p>
             </div>
-        </form>
-    </div>
+            <?= $flash_message ?>
+
+            <div class="form-stepper">
+                <div class="step active" data-step-target="1"><div class="step-circle">1</div><div class="step-title">Personal</div></div>
+                <div class="step" data-step-target="2"><div class="step-circle">2</div><div class="step-title">Contacto</div></div>
+                <div class="step" data-step-target="3"><div class="step-circle">3</div><div class="step-title">Laboral</div></div>
+            </div>
+
+            <form id="personaForm" action="form_persona.php<?= $is_edit_mode ? '?id='.$idPersona : '' ?>" method="POST" novalidate>
+                <input type="hidden" name="idPersona" value="<?= htmlspecialchars($idPersona); ?>">
+                
+                <div class="card p-4">
+                    <div class="form-step active" data-step-content="1">
+                        <h5 class="mb-4">Paso 1: Información Personal</h5>
+                        <div class="row">
+                            <div class="col-md-4 mb-3"><label for="nombre" class="form-label required">Nombre</label><input type="text" class="form-control" name="nombre" value="<?= htmlspecialchars($nombre); ?>" required></div>
+                            <div class="col-md-4 mb-3"><label for="apellido1" class="form-label required">Primer Apellido</label><input type="text" class="form-control" name="apellido1" value="<?= htmlspecialchars($apellido1); ?>" required></div>
+                            <div class="col-md-4 mb-3"><label for="apellido2" class="form-label required">Segundo Apellido</label><input type="text" class="form-control" name="apellido2" value="<?= htmlspecialchars($apellido2); ?>" required></div>
+                            <div class="col-md-6 mb-3"><label for="cedula" class="form-label required">Identificación</label><input type="text" class="form-control" name="cedula" value="<?= htmlspecialchars($cedula); ?>" required></div>
+                            <div class="col-md-6 mb-3"><label for="fecha_nac" class="form-label required">Fecha de Nacimiento</label><input type="date" class="form-control" name="fecha_nac" value="<?= htmlspecialchars($fecha_nac); ?>" required></div>
+                        </div>
+                        <div class="d-flex justify-content-end mt-3">
+                            <a href="personas.php" class="btn btn-light me-2">Cancelar</a>
+                            <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="form-step" data-step-content="2">
+                        <h5 class="mb-4">Paso 2: Contacto y Ubicación</h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3"><label for="correo_electronico" class="form-label required">Correo Electrónico</label><input type="email" class="form-control" name="correo_electronico" value="<?= htmlspecialchars($correo_electronico); ?>" required></div>
+                            <div class="col-md-6 mb-3"><label for="telefono" class="form-label required">Teléfono</label><input type="text" class="form-control" name="telefono" placeholder="0000-0000" value="<?= htmlspecialchars($telefono); ?>" required></div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4 mb-3"><label for="provincia" class="form-label required">Provincia</label><select class="form-select" id="provincia" name="provincia" required></select></div>
+                            <div class="col-md-4 mb-3"><label for="canton" class="form-label required">Cantón</label><select class="form-select" id="canton" name="canton" required></select></div>
+                            <div class="col-md-4 mb-3"><label for="distrito" class="form-label required">Distrito</label><select class="form-select" id="distrito" name="distrito" required></select></div>
+                        </div>
+                        <div class="mb-3"><label for="direccion_exacta" class="form-label required">Dirección Exacta</label><textarea class="form-control" name="direccion_exacta" rows="2" required><?= htmlspecialchars($direccion_exacta); ?></textarea></div>
+                        <div class="d-flex justify-content-between mt-3">
+                            <button type="button" class="btn btn-secondary" data-nav="prev"><i class="bi bi-arrow-left"></i> Anterior</button>
+                            <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="form-step" data-step-content="3">
+                        <h5 class="mb-4">Paso 3: Datos Laborales y Adicionales</h5>
+                        <div class="row">
+                            <div class="col-md-6 mb-3"><label for="departamento" class="form-label required">Departamento</label><select class="form-select" name="departamento" required><option value="">Seleccione...</option><?php if($departamentos && $departamentos->num_rows > 0) { mysqli_data_seek($departamentos, 0); while ($dept = $departamentos->fetch_assoc()): ?><option value="<?= $dept['idDepartamento']; ?>" <?= ($departamento_id == $dept['idDepartamento']) ? 'selected' : ''; ?>><?= htmlspecialchars($dept['nombre']); ?></option><?php endwhile; } ?></select></div>
+                            <?php if (!$is_edit_mode): ?>
+                            <div class="col-md-6 mb-3"><label for="id_jefe_fk" class="form-label required">Jefe Directo</label><select class="form-select" name="id_jefe_fk" required><option value="">Seleccione...</option><?php if($jefes_activos && $jefes_activos->num_rows > 0): mysqli_data_seek($jefes_activos, 0); while ($jefe = $jefes_activos->fetch_assoc()): ?><option value="<?= $jefe['idColaborador']; ?>"><?= htmlspecialchars($jefe['Nombre'] . ' ' . $jefe['Apellido1']); ?></option><?php endwhile; endif; ?></select></div>
+                            <?php endif; ?>
+                            <div class="col-md-6 mb-3">
+                                <label for="salario_bruto" class="form-label required">Salario Bruto (₡)</label>
+                                <input type="number" step="0.01" min="0" class="form-control" name="salario_bruto" value="<?= htmlspecialchars($salario_bruto); ?>" required>
+                            </div>
+                            <div class="col-md-4 mb-3"><label for="estado_civil" class="form-label required">Estado Civil</label><select class="form-select" name="estado_civil" required><option value="">Seleccione...</option><?php foreach ($opciones_estado_civil as $id => $desc): ?><option value="<?= $id; ?>" <?= ($estado_civil_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
+                            <div class="col-md-4 mb-3"><label for="nacionalidad" class="form-label required">Nacionalidad</label><select class="form-select" name="nacionalidad" required><option value="">Seleccione...</option><?php foreach ($opciones_nacionalidad as $id => $desc): ?><option value="<?= $id; ?>" <?= ($nacionalidad_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
+                            <div class="col-md-4 mb-3"><label for="genero" class="form-label required">Género</label><select class="form-select" name="genero" required><option value="">Seleccione...</option><?php foreach ($opciones_genero as $id => $desc): ?><option value="<?= $id; ?>" <?= ($genero_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
+                        </div>
+                        <div class="d-flex justify-content-between mt-3">
+                            <button type="button" class="btn btn-secondary" data-nav="prev"><i class="bi bi-arrow-left"></i> Anterior</button>
+                            <button type="submit" class="btn btn-primary"><i class="bi bi-save-fill me-2"></i><?= $is_edit_mode ? 'Actualizar Persona' : 'Guardar Persona'; ?></button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </main>
 
     <script>
-        // JS stepper y selects ubicación (igual que tu versión, no cambia)
         document.addEventListener('DOMContentLoaded', function () {
             const stepper = document.querySelector('.form-stepper');
             const formSteps = document.querySelectorAll('.form-step');
@@ -377,7 +379,5 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
             });
         });
     </script>
-
-    <?php include 'footer.php'; ?>
 </body>
 </html>

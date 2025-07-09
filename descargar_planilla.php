@@ -2,85 +2,85 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+if (!isset($_SESSION['username'])) {
+    header('Location: login.php');
+    exit;
+}
 
 include 'db.php'; // Conexión a la base de datos
 
-// Obtén el año y mes de la URL
-$anio = isset($_GET['anio']) ? (int)$_GET['anio'] : date('Y');
-$mes = isset($_GET['mes']) ? (int)$_GET['mes'] : date('m');
-
-// Función para calcular el número de días laborales en un mes
-function calcularDiasLaborales($anio, $mes) {
-    $dias_laborales = 0;
-    $dias_en_mes = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
-
-    for ($dia = 1; $dia <= $dias_en_mes; $dia++) {
-        $timestamp = strtotime("$anio-$mes-$dia");
-        $dia_semana = date("N", $timestamp); // 1 (lunes) a 7 (domingo)
-
-        if ($dia_semana >= 1 && $dia_semana <= 5) { // Días de lunes a viernes
-            $dias_laborales++;
-        }
-    }
-    return $dias_laborales;
+// Verificar que se ha pasado un año
+if (!isset($_GET['anio']) || !isset($_GET['mes'])) {
+    die('Período no especificado.');
 }
 
-$dias_laborales_mes = calcularDiasLaborales($anio, $mes);
+$anio = (int)$_GET['anio'];
+$mes = (int)$_GET['mes'];
 
-// Consulta para obtener las planillas del mes y año seleccionados junto con el nombre del colaborador y monto de incapacidades
-$sql = "SELECT p.idPlanillas, p.Fecha, p.Salario_bruto, p.Horas_extra, p.Deducciones, p.Vacaciones, p.Salario_neto,
-               CONCAT(pe.Nombre, ' ', pe.Apellido1, ' ', pe.Apellido2) AS Nombre_colaborador,
-               (SELECT IFNULL(SUM(i.Cantidad * (p.Salario_bruto / ?)), 0) 
-                FROM incapacidades i 
-                WHERE i.Colaborador_idColaborador = c.idColaborador) AS Incapacidades
+// --- CONSULTA CORREGIDA Y SIMPLIFICADA ---
+$sql = "SELECT 
+            p.salario_bruto,
+            p.total_horas_extra,
+            p.total_otros_ingresos,
+            p.total_deducciones,
+            p.salario_neto,
+            CONCAT(pe.Nombre, ' ', pe.Apellido1, ' ', pe.Apellido2) AS nombre_colaborador
         FROM planillas p
-        JOIN colaborador c ON p.Persona_idPersona = c.Persona_idPersona
-        JOIN persona pe ON c.Persona_idPersona = pe.idPersona
-        WHERE YEAR(p.Fecha_generacion) = ? AND MONTH(p.Fecha_generacion) = ?";
+        JOIN colaborador c ON p.id_colaborador_fk = c.idColaborador
+        JOIN persona pe ON c.id_persona_fk = pe.idPersona
+        WHERE YEAR(p.fecha_generacion) = ? AND MONTH(p.fecha_generacion) = ?";
 
 $stmt = $conn->prepare($sql);
-$stmt->bind_param("dii", $dias_laborales_mes, $anio, $mes);
+if (!$stmt) {
+    die("Error en la preparación de la consulta: " . $conn->error);
+}
+
+$stmt->bind_param("ii", $anio, $mes);
 $stmt->execute();
 $result = $stmt->get_result();
 $planillas = $result->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+$conn->close();
 
-// Establece las cabeceras para la descarga del archivo Excel
+// Establecer las cabeceras para la descarga del archivo Excel
 header("Content-Type: application/vnd.ms-excel; charset=UTF-8");
 header("Content-Disposition: attachment; filename=planilla_{$anio}_{$mes}.xls");
 header("Pragma: no-cache");
 header("Expires: 0");
 
-// Crea el contenido del archivo Excel con estilos básicos
-echo "<table border='1' style='border-collapse: collapse; font-family: Arial, sans-serif;'>";
-echo "<thead style='background-color: #f2f2f2;'>
-        <tr>
-            <th style='padding: 8px; text-align: left;'>ID</th>
-            <th style='padding: 8px; text-align: left;'>Fecha</th>
-            <th style='padding: 8px; text-align: left;'>Nombre Colaborador</th>
-            <th style='padding: 8px; text-align: left;'>Salario Bruto</th>
-            <th style='padding: 8px; text-align: left;'>Horas Extra</th>
-            <th style='padding: 8px; text-align: left;'>Deducciones</th>
-            <th style='padding: 8px; text-align: left;'>Vacaciones</th>
-            <th style='padding: 8px; text-align: left;'>Incapacidades</th>
-            <th style='padding: 8px; text-align: left;'>Salario Neto</th>
+// Añadir BOM para UTF-8 para compatibilidad con caracteres especiales en Excel
+echo "\xEF\xBB\xBF";
+
+// Crear el contenido del archivo Excel
+echo "<table border='1'>";
+echo "<thead>
+        <tr style='background-color: #f2f2f2; font-weight: bold;'>
+            <th>Nombre Colaborador</th>
+            <th>Salario Bruto</th>
+            <th>Pago Horas Extra</th>
+            <th>Otros Ingresos</th>
+            <th>Total Deducciones</th>
+            <th>Salario Neto</th>
         </tr>
       </thead>";
 echo "<tbody>";
 
-foreach ($planillas as $planilla) {
-    echo "<tr>
-            <td style='padding: 8px;'>{$planilla['idPlanillas']}</td>
-            <td style='padding: 8px;'>{$planilla['Fecha']}</td>
-            <td style='padding: 8px;'>{$planilla['Nombre_colaborador']}</td>
-            <td style='padding: 8px;'>" . number_format($planilla['Salario_bruto'], 2) . "</td>
-            <td style='padding: 8px;'>" . number_format($planilla['Horas_extra'], 2) . "</td>
-            <td style='padding: 8px;'>" . number_format($planilla['Deducciones'], 2) . "</td>
-            <td style='padding: 8px;'>" . number_format($planilla['Vacaciones'], 2) . "</td>
-            <td style='padding: 8px;'>" . number_format($planilla['Incapacidades'], 2) . "</td>
-            <td style='padding: 8px;'>" . number_format($planilla['Salario_neto'], 2) . "</td>
-          </tr>";
+if (count($planillas) > 0) {
+    foreach ($planillas as $planilla) {
+        echo "<tr>
+                <td>" . htmlspecialchars($planilla['nombre_colaborador']) . "</td>
+                <td>" . number_format($planilla['salario_bruto'], 2) . "</td>
+                <td>" . number_format($planilla['total_horas_extra'], 2) . "</td>
+                <td>" . number_format($planilla['total_otros_ingresos'], 2) . "</td>
+                <td>" . number_format($planilla['total_deducciones'], 2) . "</td>
+                <td>" . number_format($planilla['salario_neto'], 2) . "</td>
+              </tr>";
+    } // <- La llave de cierre faltante iba aquí
+} else {
+    echo "<tr><td colspan='6'>No se encontraron datos para el período seleccionado.</td></tr>";
 }
 
 echo "</tbody>";
 echo "</table>";
+exit;
 ?>
