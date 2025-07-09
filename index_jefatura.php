@@ -1,268 +1,158 @@
 <?php
 session_start();
-date_default_timezone_set('America/Costa_Rica'); // Ajusta a tu zona horaria
+include 'db.php';
 
-if (!isset($_SESSION['username'])) {
+// Validar acceso solo para Jefatura (rol 3)
+if (!isset($_SESSION['username']) || $_SESSION['rol'] != 3) {
     header('Location: login.php');
     exit;
 }
 
-include 'db.php'; // Conexión a la base de datos
+$jefatura_id = $_SESSION['colaborador_id'] ?? null;
 
-$username = $_SESSION['username'];
-$persona_id = $_SESSION['persona_id']; // ID de persona
-
-// Verifica si el `colaborador_id` está definido y no es nulo
-if (!isset($_SESSION['colaborador_id']) || is_null($_SESSION['colaborador_id'])) {
-    die("Error: ID de colaborador no definido en la sesión.");
-}
-
-$colaborador_id = $_SESSION['colaborador_id']; // ID de colaborador
-$fechaHoy = date('Y-m-d');
-
-// Variables para mensajes
-$mensajeEntrada = '';
-$mensajeSalida = '';
-$mensajeError = '';
-$mensajeHorasExtra = '';
-
-// Verificar si ya ha marcado la entrada o salida hoy
-$sql = "SELECT * FROM control_de_asistencia WHERE Persona_idPersona = $persona_id AND Fecha = '$fechaHoy'";
-$result = $conn->query($sql);
-$marcoEntrada = false;
-$marcoSalida = false;
-$asistencia = null;
-
-if ($result->num_rows > 0) {
-    $asistencia = $result->fetch_assoc();
-    if ($asistencia['Entrada'] != NULL) {
-        $marcoEntrada = true;
-    }
-    if ($asistencia['Salida'] != NULL) {
-        $marcoSalida = true;
-    }
-}
-
-// Marcar Entrada
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
-    $horaEntrada = date('H:i:s');
-    if (!$marcoEntrada) {
-        $sqlEntrada = "INSERT INTO control_de_asistencia (Persona_idPersona, Fecha, Entrada, Abierto) VALUES ($persona_id, '$fechaHoy', '$horaEntrada', 1)";
-        if ($conn->query($sqlEntrada) === TRUE) {
-            $mensajeEntrada = "Has marcado la entrada con éxito.";
-            $marcoEntrada = true;
-            $asistencia['Entrada'] = $horaEntrada; // Actualizamos la variable $asistencia
-        } else {
-            $mensajeError = "Error al marcar la entrada: " . $conn->error;
-        }
-    } else {
-        $mensajeError = "Ya has marcado tu entrada hoy.";
-    }
-}
-
-// Marcar Salida
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
-    $horaSalida = date('H:i:s');
-    if ($marcoEntrada && !$marcoSalida) {
-        $sqlSalida = "UPDATE control_de_asistencia SET Salida = '$horaSalida', Abierto = 0 WHERE Persona_idPersona = $persona_id AND Fecha = '$fechaHoy'";
-        if ($conn->query($sqlSalida) === TRUE) {
-            $mensajeSalida = "Has marcado la salida con éxito.";
-            $marcoSalida = true;
-            $asistencia['Salida'] = $horaSalida; // Actualizamos la variable $asistencia
-
-            // Calcular horas trabajadas
-            $horaEntradaTimestamp = strtotime($asistencia['Entrada']);
-            $horaSalidaTimestamp = strtotime($horaSalida);
-            $horasTrabajadas = ($horaSalidaTimestamp - $horaEntradaTimestamp) / 3600; // Convertir a horas
-
-            // Verificar si trabajó más de 9 horas
-            if ($horasTrabajadas > 9) {
-                $horasExtra = $horasTrabajadas - 9;
-                $horasCompletas = floor($horasExtra);
-                $minutosExtra = ($horasExtra - $horasCompletas) * 60;
-
-                // Aplicar la regla de redondeo
-                if ($minutosExtra >= 30) {
-                    $horasCompletas += 1; // Redondear hacia arriba
-                }
-
-                if ($horasCompletas > 0) {
-                    // Registrar las horas de inicio y fin de las horas extra
-                    $horaInicioExtra = date('H:i:s', strtotime('+9 hours', $horaEntradaTimestamp));
-                    $horaFinExtra = date('H:i:s', $horaSalidaTimestamp);
-
-                    // Insertar registro de horas extra en la tabla horas_extra
-                    $sqlHorasExtra = "INSERT INTO horas_extra (Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Colaborador_idColaborador, Persona_idPersona) 
-                                      VALUES ('$fechaHoy', '$horaInicioExtra', '$horaFinExtra', $horasCompletas, 'Horas extra automáticas', 'Pendiente', $colaborador_id, $persona_id)";
-                    
-                    if ($conn->query($sqlHorasExtra) === TRUE) {
-                        $mensajeHorasExtra = "Horas extra registradas: $horasCompletas horas.";
-                    } else {
-                        $mensajeError = "Error al registrar horas extra: " . $conn->error;
-                    }
-                }
-            }
-        } else {
-            $mensajeError = "Error al marcar la salida: " . $conn->error;
-        }
-    } else {
-        $mensajeError = "Debes marcar la entrada antes de marcar la salida o ya has marcado tu salida.";
-    }
-}
+// Consulta: colaboradores bajo este jefe
+$sql = "
+SELECT 
+    c.idColaborador,
+    CONCAT(p.Nombre, ' ', p.Apellido1, ' ', p.Apellido2) AS nombre_completo,
+    d.nombre AS departamento,
+    c.salario_bruto,
+    j.idColaborador AS jefe_id,
+    CONCAT(jp.Nombre, ' ', jp.Apellido1, ' ', jp.Apellido2) AS nombre_jefe
+FROM colaborador c
+INNER JOIN persona p ON c.id_persona_fk = p.idPersona
+INNER JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
+LEFT JOIN colaborador j ON c.id_jefe_fk = j.idColaborador
+LEFT JOIN persona jp ON j.id_persona_fk = jp.idPersona
+WHERE c.id_jefe_fk = ?
+ORDER BY nombre_completo ASC
+";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $jefatura_id);
+$stmt->execute();
+$result = $stmt->get_result();
 ?>
-
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
     <meta charset="UTF-8">
-    <title>Dashboard Jefatura - Edginton S.A.</title>
+    <title>Panel de Jefatura - Sistema RRHH</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Roboto', sans-serif;
-            background-color: #f0f2f5;
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
+        body { background: #f4f7fc; font-family: 'Poppins', sans-serif; }
+        .container-main { max-width: 1000px; margin-top: 50px; }
+        .jefatura-card {
+            border-radius: 1.5rem;
+            box-shadow: 0 0.5rem 2rem rgba(60,72,88,0.10);
+            background: linear-gradient(135deg, #5e72e4 0%, #f4f7fc 100%);
+            border: none;
+            overflow: hidden;
         }
-
-        .container {
-            padding-top: 30px;
-            flex-grow: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
+        .jefatura-card .card-header {
+            background: #fff;
+            border-bottom: 1px solid #e4e7ed;
+            padding: 1.5rem 2rem 1rem 2rem;
         }
-
-        .clock-in-out-container {
-            text-align: center;
-            background-color: #fff;
-            padding: 40px;
-            border-radius: 20px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-            max-width: 400px;
-            width: 100%;
+        .jefatura-card .card-body {
+            padding: 2rem;
         }
-
-        .clock-in-out-container button {
-            width: 100%;
-            padding: 15px;
-            font-size: 1.2rem;
-            border-radius: 50px;
-            margin: 10px 0;
-            transition: all 0.3s ease;
+        .table thead th {
+            background: #5e72e4;
+            color: #fff;
+            font-weight: 600;
             border: none;
         }
-
-        .clock-in-btn {
-            background-color: #28a745;
-            color: white;
+        .search-box {
+            max-width: 300px;
+            margin-bottom: 1.2rem;
         }
-
-        .clock-in-btn:disabled,
-        .clock-out-btn:disabled {
-            opacity: 0.6;
-            pointer-events: none;
+        .rounded-avatar {
+            width: 40px; height: 40px;
+            object-fit: cover;
+            border-radius: 50%;
+            border: 2px solid #5e72e4;
         }
-
-        .clock-out-btn {
-            background-color: #dc3545;
-            color: white;
-        }
-
-        .message {
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 5px;
-            font-size: 1rem;
-        }
-
-        .message-success {
-            background-color: #d4edda;
-            color: #155724;
-        }
-
-        .message-error {
-            background-color: #f8d7da;
-            color: #721c24;
-        }
-
-        .message-info {
-            background-color: #cce5ff;
-            color: #004085;
-        }
-
-        footer {
-            background-color: #2c3e50;
-            padding: 20px;
+        .no-result {
             text-align: center;
-            color: #ecf0f1;
+            padding: 2.5rem 0 2rem 0;
+            color: #b0b3c3;
         }
     </style>
 </head>
-
 <body>
+    <?php include 'header.php'; ?>
 
-<?php include 'header.php'; ?>
-
-    <!-- Main Content -->
-    <div class="container">
-        <div class="clock-in-out-container">
-            <h1>Marcar Entrada / Salida</h1>
-
-            <!-- Mostrar mensajes -->
-            <?php if ($mensajeEntrada): ?>
-                <div class="message message-success">
-                    <?= htmlspecialchars($mensajeEntrada); ?>
+    <div class="container container-main">
+        <div class="card jefatura-card shadow">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="mb-0" style="font-weight: 700; color:#5e72e4;"><i class="bi bi-person-badge-fill me-2"></i>Panel de Jefatura</h3>
+                    <small class="text-muted">Gestión de colaboradores a tu cargo</small>
                 </div>
-            <?php endif; ?>
-
-            <?php if ($mensajeSalida): ?>
-                <div class="message message-danger">
-                    <?= htmlspecialchars($mensajeSalida); ?>
+                <div>
+                    <a href="logout.php" class="btn btn-outline-danger">
+                        <i class="bi bi-box-arrow-right me-1"></i>Cerrar sesión
+                    </a>
                 </div>
-            <?php endif; ?>
+            </div>
+            <div class="card-body">
+                <input type="text" class="form-control search-box" id="searchInput" placeholder="Buscar colaborador...">
 
-            <?php if ($mensajeHorasExtra): ?>
-                <div class="message message-info">
-                    <?= htmlspecialchars($mensajeHorasExtra); ?>
+                <div class="table-responsive">
+                    <table class="table align-middle table-hover" id="collabTable">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Nombre completo</th>
+                                <th>Departamento</th>
+                                <th>Salario bruto</th>
+                                <th>Jefe directo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php if ($result && $result->num_rows > 0): ?>
+                            <?php $i=1; while($row = $result->fetch_assoc()): ?>
+                                <tr>
+                                    <td><?= $i++ ?></td>
+                                    <td>
+                                        <span class="fw-semibold"><?= htmlspecialchars($row['nombre_completo']) ?></span>
+                                    </td>
+                                    <td><?= htmlspecialchars($row['departamento']) ?></td>
+                                    <td>₡<?= number_format($row['salario_bruto'], 2) ?></td>
+                                    <td><?= $row['nombre_jefe'] ? htmlspecialchars($row['nombre_jefe']) : '<span class="badge bg-secondary">Sin jefe</span>' ?></td>
+                                </tr>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <tr><td colspan="5" class="no-result">
+                                <i class="bi bi-people-slash" style="font-size:2rem"></i><br>
+                                No tienes colaboradores a tu cargo.
+                            </td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
                 </div>
-            <?php endif; ?>
-
-            <?php if ($mensajeError): ?>
-                <div class="message message-error">
-                    <?= htmlspecialchars($mensajeError); ?>
-                </div>
-            <?php endif; ?>
-
-            <form method="post">
-                <button class="clock-in-btn" type="submit" name="marcar_entrada" <?php if ($marcoEntrada) echo 'disabled'; ?>>
-                    Marcar Entrada
-                </button>
-                <button class="clock-out-btn" type="submit" name="marcar_salida" <?php if (!$marcoEntrada || $marcoSalida) echo 'disabled'; ?>>
-                    Marcar Salida
-                </button>
-            </form>
-            <?php if ($marcoEntrada && isset($asistencia['Entrada'])) : ?>
-                <p>Has marcado tu entrada a las: <?php echo htmlspecialchars($asistencia['Entrada']); ?></p>
-            <?php endif; ?>
-            <?php if ($marcoSalida && isset($asistencia['Salida'])) : ?>
-                <p>Has marcado tu salida a las: <?php echo htmlspecialchars($asistencia['Salida']); ?></p>
-            <?php endif; ?>
+            </div>
         </div>
     </div>
-
-    <!-- Footer -->
-    <footer>
-        &copy; 2024 Edginton S.A. Todos los derechos reservados.
-    </footer>
-
+    
+    <!-- Buscador interactivo -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const searchInput = document.getElementById('searchInput');
+            searchInput.addEventListener('keyup', function() {
+                let filter = this.value.toLowerCase();
+                let rows = document.querySelectorAll("#collabTable tbody tr");
+                rows.forEach(function(row) {
+                    let name = row.children[1].innerText.toLowerCase();
+                    row.style.display = name.includes(filter) ? "" : "none";
+                });
+            });
+        });
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
-
 </html>
 
-<?php $conn->close(); ?>

@@ -153,9 +153,9 @@ function rolName($rol) {
             <a class="nav-link <?= isActive('ver_liquidacion.php') ?>" href="ver_liquidacion.php"><i class="bi bi-bank"></i> Mi Liquidación</a>
             <a class="nav-link <?= isActive('ver_aguinaldo.php') ?>" href="ver_aguinaldo.php"><i class="bi bi-gift"></i> Mi Aguinaldo</a>   
          <?php elseif ($rol == 3): // JEFATURA ?>
-            <a class="nav-link <?= isActive('index_jefe.php') ?>" href="index_jefe.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
+            <a class="nav-link <?= isActive('index_jefatura.php') ?>" href="index_jefatura.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
             <a class="nav-link <?= isActive('equipo.php') ?>" href="equipo.php"><i class="bi bi-people"></i> Mi Equipo</a>
-            <a class="nav-link <?= isActive('evaluar_empleados.php') ?>" href="evaluar_empleados.php"><i class="bi bi-star-half"></i> Evaluar Empleados</a>
+            <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-half"></i> Evaluar Empleados</a>
             <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</a>
             <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobar Permisos</a>
             <a class="nav-link <?= isActive('reporte_equipo.php') ?>" href="reporte_equipo.php"><i class="bi bi-clipboard-data"></i> Reportes de Equipo</a>

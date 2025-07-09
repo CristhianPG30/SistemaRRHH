@@ -2,15 +2,17 @@
 session_start();
 include 'db.php'; // Conexión a la base de datos
 
+// Solo administrador puede acceder
 if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
     header('Location: login.php');
     exit;
 }
 
-// --- LÓGICA DE GESTIÓN ---
+// --- LÓGICA DE ELIMINACIÓN SOLO EN TABLA usuario ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user_id'])) {
     $idUsuario = intval($_POST['delete_user_id']);
     if ($idUsuario > 0) {
+        // Solo elimina el usuario, nada más
         $stmt = $conn->prepare("DELETE FROM usuario WHERE idUsuario = ?");
         $stmt->bind_param("i", $idUsuario);
         if ($stmt->execute()) {
@@ -42,6 +44,7 @@ function getRoleInfo($roleName) {
     switch (strtolower($roleName)) {
         case 'administrador':
             return ['icon' => 'bi-shield-lock-fill', 'color' => 'danger'];
+        case 'recursos humanos':
         case 'rrhh':
             return ['icon' => 'bi-person-gear', 'color' => 'info'];
         case 'jefatura':
@@ -53,7 +56,6 @@ function getRoleInfo($roleName) {
     }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -130,6 +132,7 @@ function getRoleInfo($roleName) {
         </div>
     </div>
 
+    <!-- Modal de confirmación para eliminar -->
     <div class="modal fade" id="deleteModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">Confirmar Eliminación</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><p>¿Estás seguro de que deseas eliminar este usuario? Esta acción es irreversible.</p></div><div class="modal-footer"><form id="deleteForm" method="POST" action="usuarios.php"><input type="hidden" name="delete_user_id" id="delete_user_id_input"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-danger">Eliminar</button></form></div></div></div></div>
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
