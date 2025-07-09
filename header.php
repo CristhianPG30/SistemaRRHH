@@ -2,7 +2,7 @@
 if (session_status() === PHP_SESSION_NONE) session_start();
 if (!isset($_SESSION['username'])) { header("Location: login.php"); exit; }
 $username = $_SESSION['username'];
-$rol = $_SESSION['rol'] ?? 0; // 1=Admin, 2=RRHH, 3=Jefatura, 4=Colaborador
+$rol = $_SESSION['rol'] ?? 0; // 1=Admin, 2=Recursos Humanos, 3=Jefatura, 4=Colaborador
 
 function isActive($pageNames) {
     $currentPage = basename($_SERVER['PHP_SELF']);
@@ -130,43 +130,47 @@ function rolName($rol) {
         <?php if ($rol == 1): // ADMINISTRADOR ?>
             <a class="nav-link <?= isActive('index_administrador.php') ?>" href="index_administrador.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
             <a class="nav-link <?= isActive('usuarios.php') ?>" href="usuarios.php"><i class="bi bi-people"></i> Gestión de Usuarios</a>
-            <a class="nav-link <?= isActive('personas.php') ?>" href="personas.php"><i class="bi bi-person-lines-fill"></i> Gestión de Personas</a> <!-- AGREGADO -->
+            <a class="nav-link <?= isActive('personas.php') ?>" href="personas.php"><i class="bi bi-person-lines-fill"></i> Gestión de Personas</a>
+            <a class="nav-link <?= isActive('departamentos.php') ?>" href="departamentos.php"><i class="bi bi-diagram-3"></i> Departamentos</a>
             <a class="nav-link <?= isActive('nóminas.php') ?>" href="nóminas.php"><i class="bi bi-calculator"></i> Planillas</a>
-            <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-ui-checks"></i> Aprobar Solicitudes</a>
+            <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Horas Extra</a>
+            <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Permisos</a>
+            <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i> Evaluaciones</a>
+            <a class="nav-link <?= isActive('liquidación.php') ?>" href="liquidación.php"><i class="bi bi-bank"></i> Liquidaciones</a>
+            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift"></i> Aguinaldos</a>
             <a class="nav-link <?= isActive('reporte_global.php') ?>" href="reporte_global.php"><i class="bi bi-bar-chart"></i> Reportes Globales</a>
-            <a class="nav-link <?= isActive('auditoria.php') ?>" href="auditoria.php"><i class="bi bi-shield-check"></i> Auditoría</a>
          <?php elseif ($rol == 2): // COLABORADOR ?>
             <a class="nav-link <?= isActive('index_colaborador.php') ?>" href="index_colaborador.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
-            <div class="nav flex-column">
-                <a class="nav-link d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#solicitudesMenu" role="button" aria-expanded="<?= isActive(['solicitud_permisos.php','solicitud_vacaciones.php','solicitud_incapacidad.php','horas_extra.php']) ? 'true':'false' ?>" aria-controls="solicitudesMenu">
-                    <span><i class="bi bi-ui-checks"></i> Solicitudes</span>
-                    <i class="bi bi-chevron-down ms-auto"></i>
-                </a>
-                <div class="collapse <?= isActive(['solicitud_permisos.php','solicitud_vacaciones.php','solicitud_incapacidad.php','horas_extra.php']) ? 'show':'' ?>" id="solicitudesMenu">
-                    <a class="nav-link sidebar-submenu <?= isActive('solicitud_permisos.php') ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-check"></i> Permiso</a>
-                    <a class="nav-link sidebar-submenu <?= isActive('solicitud_vacaciones.php') ?>" href="solicitud_vacaciones.php"><i class="bi bi-umbrella"></i> Vacaciones</a>
-                    <a class="nav-link sidebar-submenu <?= isActive('solicitud_incapacidad.php') ?>" href="solicitud_incapacidad.php"><i class="bi bi-emoji-dizzy"></i> Incapacidad</a>
-                    <a class="nav-link sidebar-submenu <?= isActive('horas_extra.php') ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i> Horas Extra</a>
-                </div>
-            </div>
+            <a class="nav-link <?= isActive('mi_perfil.php') ?>" href="mi_perfil.php"><i class="bi bi-person"></i> Mi Perfil</a>
             <a class="nav-link <?= isActive('control_asistencia.php') ?>" href="control_asistencia.php"><i class="bi bi-journal-check"></i> Mi Asistencia</a>
             <a class="nav-link <?= isActive('mis_solicitudes.php') ?>" href="mis_solicitudes.php"><i class="bi bi-list-check"></i> Mis Solicitudes</a>
-            <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i> Mis Evaluaciones</a>
+            <a class="nav-link <?= isActive('solicitud_permisos.php') ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-check"></i> Solicitar Permiso</a>
+            <a class="nav-link <?= isActive('solicitud_vacaciones.php') ?>" href="solicitud_vacaciones.php"><i class="bi bi-umbrella"></i> Solicitar Vacaciones</a>
+            <a class="nav-link <?= isActive('solicitud_incapacidad.php') ?>" href="solicitud_incapacidad.php"><i class="bi bi-emoji-dizzy"></i> Solicitar Incapacidad</a>
+            <a class="nav-link <?= isActive('horas_extra.php') ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i> Solicitar Horas Extra</a>
+            <a class="nav-link <?= isActive('ver_evaluaciones.php') ?>" href="ver_evaluaciones.php"><i class="bi bi-star-fill"></i> Mis Evaluaciones</a>
             <a class="nav-link <?= isActive('salario.php') ?>" href="salario.php"><i class="bi bi-cash-coin"></i> Mi Salario</a>
-            <a class="nav-link <?= isActive('liquidación.php') ?>" href="liquidación.php"><i class="bi bi-bank"></i> Mi Liquidación</a>
-            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift"></i> Mi Aguinaldo</a>
+            <a class="nav-link <?= isActive('ver_liquidacion.php') ?>" href="ver_liquidacion.php"><i class="bi bi-bank"></i> Mi Liquidación</a>
+            <a class="nav-link <?= isActive('ver_aguinaldo.php') ?>" href="ver_aguinaldo.php"><i class="bi bi-gift"></i> Mi Aguinaldo</a>   
+         <?php elseif ($rol == 3): // JEFATURA ?>
+            <a class="nav-link <?= isActive('index_jefe.php') ?>" href="index_jefe.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
+            <a class="nav-link <?= isActive('equipo.php') ?>" href="equipo.php"><i class="bi bi-people"></i> Mi Equipo</a>
+            <a class="nav-link <?= isActive('evaluar_empleados.php') ?>" href="evaluar_empleados.php"><i class="bi bi-star-half"></i> Evaluar Empleados</a>
+            <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</a>
+            <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobar Permisos</a>
+            <a class="nav-link <?= isActive('reporte_equipo.php') ?>" href="reporte_equipo.php"><i class="bi bi-clipboard-data"></i> Reportes de Equipo</a>
         <?php elseif ($rol == 4): // RECURSOS HUMANOS ?>
             <a class="nav-link <?= isActive('index_rrhh.php') ?>" href="index_rrhh.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
-            <a class="nav-link <?= isActive('planilla.php') ?>" href="planilla.php"><i class="bi bi-calculator"></i> Planillas</a>
-            <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-ui-checks"></i> Aprobar Solicitudes</a>
-            <a class="nav-link <?= isActive('reporte_global.php') ?>" href="reporte_global.php"><i class="bi bi-bar-chart"></i> Reportes Globales</a>
             <a class="nav-link <?= isActive('empleados.php') ?>" href="empleados.php"><i class="bi bi-person-lines-fill"></i> Empleados</a>
-        <?php elseif ($rol == 3): // JEFATURA ?>
-            <a class="nav-link <?= isActive('index_jefe.php') ?>" href="index_jefe.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
-            <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-ui-checks"></i> Aprobar Solicitudes</a>
-            <a class="nav-link <?= isActive('equipo.php') ?>" href="equipo.php"><i class="bi bi-people"></i> Mi Equipo</a>
-            <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i> Evaluar Empleados</a>
-            <a class="nav-link <?= isActive('reporte_equipo.php') ?>" href="reporte_equipo.php"><i class="bi bi-clipboard-data"></i> Reportes de Equipo</a>
+            <a class="nav-link <?= isActive('nóminas.php') ?>" href="nóminas.php"><i class="bi bi-calculator"></i> Planillas</a>
+            <a class="nav-link <?= isActive('horasextra.php') ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Horas Extra</a>
+            <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Permisos</a>
+            <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i> Evaluaciones</a>
+            <a class="nav-link <?= isActive('liquidación.php') ?>" href="liquidación.php"><i class="bi bi-bank"></i> Liquidaciones</a>
+            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift"></i> Aguinaldos</a>
+            <a class="nav-link <?= isActive('reporte_global.php') ?>" href="reporte_global.php"><i class="bi bi-bar-chart"></i> Reportes Globales</a>
+        
+        
         <?php else: // OTRO USUARIO ?>
             <a class="nav-link <?= isActive('index_colaborador.php') ?>" href="index_colaborador.php"><i class="bi bi-house-door-fill"></i> Inicio</a>
         <?php endif; ?>
@@ -177,5 +181,4 @@ function rolName($rol) {
         </form>
     </div>
 </aside>
-<!-- Bootstrap JS para collapse/submenú -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>

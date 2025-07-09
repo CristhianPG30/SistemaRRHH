@@ -1,124 +1,279 @@
-<?php 
+<?php
 session_start();
-if (!isset($_SESSION['username']) || $_SESSION['rol'] != 2) {
-    header('Location: login.php');
+
+if (!isset($_SESSION['username'])) {
+    header("Location: login.php");
     exit;
 }
-include 'db.php';
-$colaborador_id = $_SESSION['colaborador_id'];
+
+$roles_permitidos = [1, 3, 4];
+$usuario_rol = $_SESSION['rol'] ?? 0;
+
+if (!in_array($usuario_rol, $roles_permitidos)) {
+    include 'header.php';
+    echo '<div class="container" style="margin-left:280px;max-width:600px;padding-top:3rem;">
+            <div class="alert alert-danger shadow text-center">
+                <i class="bi bi-shield-exclamation" style="font-size:2.5rem;"></i><br>
+                <b>No tienes permisos para acceder a la evaluación de empleados.</b>
+            </div>
+          </div>';
+    include 'footer.php';
+    exit;
+}
+
+require_once 'db.php';
+
+$msg = "";
+$msg_type = "success";
+
+// Obtener colaboradores activos
+$colaboradores = [];
+$res = $conn->query("SELECT c.idColaborador, p.Nombre, p.Apellido1, p.Apellido2
+                     FROM colaborador c
+                     INNER JOIN persona p ON c.id_persona_fk = p.idPersona
+                     WHERE c.activo = 1
+                     ORDER BY p.Nombre ASC");
+while ($row = $res->fetch_assoc()) $colaboradores[] = $row;
+
+// Procesar formulario
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id_colaborador'])) {
+    $id_colaborador = intval($_POST['id_colaborador']);
+    $fecha = date('Y-m-d');
+    $puntualidad = intval($_POST['puntualidad']);
+    $desempeno = intval($_POST['desempeno']);
+    $trabajo_equipo = intval($_POST['trabajo_equipo']);
+    $comentarios = trim($_POST['comentarios']);
+
+    // Calificación: promedio de las 3 métricas (redondeado)
+    $calificacion = round(($puntualidad + $desempeno + $trabajo_equipo) / 3);
+
+    if ($id_colaborador && $calificacion) {
+        $stmt = $conn->prepare("INSERT INTO evaluaciones 
+            (Colaborador_idColaborador, Fecharealizacion, Calificacion, Comentarios)
+            VALUES (?, ?, ?, ?)");
+        $stmt->bind_param("isis", $id_colaborador, $fecha, $calificacion, $comentarios);
+        if ($stmt->execute()) {
+            $msg = "¡Evaluación registrada correctamente!";
+            $msg_type = "success";
+        } else {
+            $msg = "Error al guardar la evaluación.";
+            $msg_type = "danger";
+        }
+        $stmt->close();
+    } else {
+        $msg = "Todos los campos son obligatorios.";
+        $msg_type = "danger";
+    }
+}
 ?>
 
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Mi Evaluación - Edginton S.A.</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;700&display=swap" rel="stylesheet">
-    <style>
-        body { background: linear-gradient(135deg, #f4faff 0%, #e3f0fd 100%) !important; font-family: 'Poppins',sans-serif; }
-        .card-evaluacion { background: #fff; border-radius: 2.2rem; box-shadow: 0 8px 32px 0 rgba(44,62,80,.10); padding: 2.2rem 2.5rem 1.7rem 2.5rem; max-width: 750px; margin: 44px auto 0; }
-        .titulo { font-weight: 900; font-size: 2.1rem; color: #185197; letter-spacing: .5px; text-align: center; display: flex; align-items: center; justify-content: center; gap: .8rem;}
-        .promedio-box { display: flex; flex-direction:column; align-items:center; margin: 2.3rem 0 2rem 0;}
-        .promedio-num { font-size: 3.2rem; font-weight: 800; color: #2c92e2;}
-        .promedio-stars { font-size: 2.2rem; color: #ffd700; margin-bottom: 10px;}
-        .promedio-label { font-size: 1.12rem; color: #1b5880; margin-top: .2rem;}
-        .progress { height: 18px; border-radius: 15px; background: #e4f0ff;}
-        .progress-bar { background: linear-gradient(90deg, #23b6ff 70%, #8de1fd 100%);}
-        .table-historial th { background: #f2faff; color: #329cd4;}
-        .badge-valor { font-size:1rem; background: #ffec9f; color:#a68b0a; border-radius:.7rem; font-weight:600; padding: .6em 1em;}
-        .comentario-chat {background: #eaf8fe; border-radius: 1rem 1rem 1rem .2rem; box-shadow: 0 1px 7px #37b1ff15; padding: .8em 1.1em; font-size: 1.08em; color: #206288; margin-bottom:.6em;}
-        .historial-titulo {font-size: 1.25rem; font-weight:700; color: #1b7bb2; margin-top: 2rem; margin-bottom:1.1rem;}
-        @media (max-width:700px){ .card-evaluacion{padding:1rem;} .titulo{font-size:1.15rem;} .table-historial td,.table-historial th{font-size:.97rem;} }
-    </style>
-</head>
-<body>
 <?php include 'header.php'; ?>
-<div class="card-evaluacion animate__animated animate__fadeInDown">
-    <div class="titulo mb-3">
-        <i class="bi bi-star-fill"></i> Mi Evaluación General
-    </div>
 
-    <?php
-    // 1. Promedio
-    $sql_promedio = "SELECT ROUND(AVG(Calificacion),1) as promedio FROM evaluaciones WHERE Colaborador_idColaborador = ?";
-    $stmt = $conn->prepare($sql_promedio);
-    $stmt->bind_param("i", $colaborador_id);
-    $stmt->execute();
-    $stmt->bind_result($promedio);
-    $stmt->fetch();
-    $stmt->close();
-    $promedio = $promedio ?: 0;
-    ?>
-    <div class="promedio-box">
-        <div class="promedio-num animate__animated animate__fadeInDown"><?= $promedio ?></div>
-        <div class="promedio-stars">
-            <?php for($i=1;$i<=5;$i++): ?>
-                <?php if($i <= round($promedio)): ?>
-                    <i class="bi bi-star-fill"></i>
-                <?php else: ?>
-                    <i class="bi bi-star"></i>
-                <?php endif; ?>
-            <?php endfor ?>
-        </div>
-        <div class="progress w-50 mb-2">
-            <div class="progress-bar" role="progressbar" style="width: <?= ($promedio/5)*100 ?>%" aria-valuenow="<?= $promedio ?>" aria-valuemin="0" aria-valuemax="5"></div>
-        </div>
-        <div class="promedio-label">Promedio general de todas tus evaluaciones (máx. 5)</div>
-    </div>
+<style>
+body {
+    background: linear-gradient(120deg, #e8f7ff 0%, #e2f0fa 60%, #d8e6ef 100%);
+    font-family: 'Segoe UI', 'Nunito', 'Roboto', sans-serif;
+}
+.eval-glass-center {
+    min-height: 94vh;
+    min-width: 100vw;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.eval-glass-card {
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 6px 32px #179ad77e, 0 2px 6px #6de5e920;
+    border-radius: 2.2rem;
+    max-width: 440px;
+    width: 100%;
+    padding: 2.6rem 2rem 2rem 2rem;
+    animation: glassfade .7s;
+}
+@keyframes glassfade {
+    0% { opacity:0; transform: translateY(30px);}
+    100%{ opacity:1; transform: none;}
+}
+.eval-brand-bar {
+    background: linear-gradient(90deg, #0e8acb 0%, #14e0ec 100%);
+    border-radius: 2rem 2rem 0 0;
+    margin: -2.6rem -2rem 1.6rem -2rem;
+    padding: 1.5rem 2rem 1.1rem 2rem;
+    text-align: center;
+    box-shadow: 0 3px 22px #11bff844;
+}
+.eval-brand-title {
+    color: #fff;
+    font-size: 1.45rem;
+    font-weight: 900;
+    letter-spacing: 1.2px;
+    margin-bottom: 0;
+    text-shadow: 0 2px 20px #0e122870;
+}
+.eval-brand-icon {
+    font-size: 2.3rem;
+    color: #fff;
+    filter: drop-shadow(0 2px 12px #18c0ff93);
+    margin-right: .5rem;
+}
+.form-label {
+    font-weight: 700;
+    color: #1783b0;
+}
+.btn-glow {
+    background: linear-gradient(90deg, #14c8ee 60%, #21aaff 100%);
+    color: #fff;
+    font-weight: 800;
+    letter-spacing: .7px;
+    border: none;
+    border-radius: 1rem;
+    padding: .7rem 1.7rem;
+    margin-top: .3rem;
+    box-shadow: 0 2px 16px #18c0ff45;
+    transition: box-shadow .14s, background .2s;
+}
+.btn-glow:hover {
+    background: linear-gradient(90deg, #23b6ff 30%, #47d9fd 100%);
+    color: #fff;
+    box-shadow: 0 6px 24px #18c0ff85;
+}
+.select-lg {
+    font-size: 1.13rem;
+    padding: .65rem;
+    border-radius: 1.2rem;
+}
+#avg-badge {
+    font-size: 1.03rem;
+    border-radius: 1rem;
+    background: #e2f4ff;
+    color: #0e86cb;
+    margin: .8rem auto .3rem auto;
+    padding: .35rem 1.1rem;
+    font-weight: 700;
+    display: none;
+    box-shadow: 0 1px 7px #18c0ff13;
+}
+.eval-footer {
+    margin-top: 1.5rem;
+    font-size: .95rem;
+    color: #179ad7;
+    text-align: center;
+    opacity: .68;
+    letter-spacing: .5px;
+}
+@media (max-width: 550px) {
+    .eval-glass-card { padding: 1.5rem .3rem 1.4rem .3rem; border-radius: 1.1rem; }
+    .eval-brand-bar { border-radius: 1.1rem 1.1rem 0 0; }
+}
+</style>
 
-    <!-- 2. Historial -->
-    <div class="historial-titulo"><i class="bi bi-clock-history"></i> Historial de Evaluaciones</div>
-    <div class="table-responsive">
-    <table class="table table-historial table-bordered align-middle">
-        <thead>
-            <tr>
-                <th>Fecha</th>
-                <th>Calificación</th>
-                <th>Comentario</th>
-            </tr>
-        </thead>
-        <tbody>
-        <?php
-        $sql_hist = "SELECT Fecharealizacion, Calificacion, Comentarios FROM evaluaciones WHERE Colaborador_idColaborador = ? ORDER BY Fecharealizacion DESC";
-        $stmt = $conn->prepare($sql_hist);
-        $stmt->bind_param("i", $colaborador_id);
-        $stmt->execute();
-        $stmt->bind_result($fecha, $calif, $coment);
-        $hayDatos = false;
-        while ($stmt->fetch()):
-            $hayDatos = true;
-        ?>
-            <tr>
-                <td><?= date('d/m/Y', strtotime($fecha)) ?></td>
-                <td>
-                    <span class="badge badge-valor"><?= $calif ?> / 5</span>
-                    <span style="margin-left:7px;">
-                        <?php for($i=1;$i<=5;$i++): ?>
-                            <?= $i <= $calif ? '<i class="bi bi-star-fill text-warning"></i>' : '<i class="bi bi-star text-muted"></i>'; ?>
-                        <?php endfor ?>
-                    </span>
-                </td>
-                <td>
-                    <?php if ($coment): ?>
-                        <div class="comentario-chat"><?= nl2br(htmlspecialchars($coment)) ?></div>
-                    <?php else: ?>
-                        <em class="text-muted">Sin comentarios</em>
-                    <?php endif ?>
-                </td>
-            </tr>
-        <?php endwhile; $stmt->close(); ?>
-        <?php if (!$hayDatos): ?>
-            <tr>
-                <td colspan="3" class="text-muted text-center">No tienes evaluaciones registradas.</td>
-            </tr>
-        <?php endif ?>
-        </tbody>
-    </table>
+<div class="eval-glass-center">
+    <div class="eval-glass-card">
+        <div class="eval-brand-bar">
+            <span class="eval-brand-icon"><i class="bi bi-stars"></i></span>
+            <span class="eval-brand-title">Evaluación de Empleado</span>
+        </div>
+        <?php if ($msg): ?>
+            <div class="alert alert-<?= $msg_type ?> alert-dismissible fade show text-center" role="alert" style="font-size:1.08rem;">
+                <?= $msg ?>
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+        <?php endif; ?>
+
+        <form method="post" class="row g-3" id="evalForm" autocomplete="off">
+            <div class="col-12">
+                <label for="id_colaborador" class="form-label">
+                    Empleado a Evaluar
+                    <i class="bi bi-info-circle text-info" data-bs-toggle="tooltip" title="Seleccione el colaborador que desea evaluar."></i>
+                </label>
+                <select name="id_colaborador" id="id_colaborador" class="form-select select-lg" required>
+                    <option value="">Seleccione un colaborador...</option>
+                    <?php foreach ($colaboradores as $col): ?>
+                        <option value="<?= $col['idColaborador'] ?>">
+                            <?= htmlspecialchars($col['Nombre'].' '.$col['Apellido1'].' '.$col['Apellido2']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="col-12 d-flex justify-content-between align-items-center gap-2">
+                <div style="flex:1;">
+                    <label class="form-label">Puntualidad
+                        <i class="bi bi-info-circle text-info" data-bs-toggle="tooltip" title="¿Llega a tiempo, cumple horarios?"></i>
+                    </label>
+                    <select name="puntualidad" id="puntualidad" class="form-select select-lg" required>
+                        <option value="">--</option>
+                        <?php for ($i=1;$i<=5;$i++): ?>
+                            <option value="<?= $i ?>"><?= $i ?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div style="flex:1;">
+                    <label class="form-label">Desempeño
+                        <i class="bi bi-info-circle text-info" data-bs-toggle="tooltip" title="¿Cómo realiza su trabajo y tareas?"></i>
+                    </label>
+                    <select name="desempeno" id="desempeno" class="form-select select-lg" required>
+                        <option value="">--</option>
+                        <?php for ($i=1;$i<=5;$i++): ?>
+                            <option value="<?= $i ?>"><?= $i ?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+                <div style="flex:1;">
+                    <label class="form-label">Trabajo en equipo
+                        <i class="bi bi-info-circle text-info" data-bs-toggle="tooltip" title="¿Colabora y trabaja bien con otros?"></i>
+                    </label>
+                    <select name="trabajo_equipo" id="trabajo_equipo" class="form-select select-lg" required>
+                        <option value="">--</option>
+                        <?php for ($i=1;$i<=5;$i++): ?>
+                            <option value="<?= $i ?>"><?= $i ?></option>
+                        <?php endfor; ?>
+                    </select>
+                </div>
+            </div>
+            <div class="col-12 text-center">
+                <div id="avg-badge">
+                    Promedio: <span id="promedio-num"></span>
+                </div>
+            </div>
+            <div class="col-12">
+                <label class="form-label">Comentarios adicionales</label>
+                <textarea name="comentarios" class="form-control" rows="2" style="border-radius:1rem;" placeholder="Escribe aquí tus observaciones o sugerencias"></textarea>
+            </div>
+            <div class="col-12 text-center">
+                <button type="submit" class="btn btn-glow px-5"><i class="bi bi-send-check"></i> Guardar Evaluación</button>
+            </div>
+        </form>
+        <div class="eval-footer">
+            <i class="bi bi-shield-check"></i> Esta evaluación es confidencial y solo será visible para RRHH y jefatura autorizada.
+        </div>
     </div>
 </div>
+
+<?php include 'footer.php'; ?>
+
+<!-- Animate.css y Bootstrap JS para tooltips -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
-</body>
-</html>
+<script>
+// Inicializar tooltips Bootstrap
+var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+tooltipTriggerList.map(function (tooltipTriggerEl) {
+  return new bootstrap.Tooltip(tooltipTriggerEl)
+})
+
+// Promedio dinámico
+function calcularPromedio() {
+    const p = parseInt(document.getElementById('puntualidad').value) || 0;
+    const d = parseInt(document.getElementById('desempeno').value) || 0;
+    const t = parseInt(document.getElementById('trabajo_equipo').value) || 0;
+    const total = [p, d, t].filter(n=>n>0).length;
+    let avg = (total === 3) ? ((p + d + t) / 3).toFixed(2) : '';
+    const badge = document.getElementById('avg-badge');
+    document.getElementById('promedio-num').textContent = avg;
+    badge.style.display = (avg ? 'inline-block' : 'none');
+}
+['puntualidad','desempeno','trabajo_equipo'].forEach(function(id){
+    document.getElementById(id).addEventListener('change', calcularPromedio);
+});
+</script>
