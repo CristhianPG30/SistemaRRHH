@@ -7,6 +7,7 @@ if (!isset($_SESSION['username'])) {
 include 'db.php';
 
 $persona_id = $_SESSION['persona_id'];
+$mensaje = '';
 
 // PROCESAR JUSTIFICACIÓN
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['justificar_id'])) {
@@ -37,7 +38,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['justificar_id'])) {
 }
 
 // TRAER HORAS EXTRA
-$stmt = $conn->prepare("SELECT idPermisos, Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Observaciones FROM horas_extra WHERE Persona_idPersona = ? ORDER BY Fecha DESC, hora_inicio DESC");
+$stmt = $conn->prepare("SELECT idPermisos, Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Observaciones
+                        FROM horas_extra
+                        WHERE Persona_idPersona = ?
+                        ORDER BY Fecha DESC, hora_inicio DESC");
 $stmt->bind_param("i", $persona_id);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -50,10 +54,9 @@ $conn->close();
 ?>
 
 <?php include 'header.php'; ?>
-
 <div class="container mt-4">
     <h2>Historial de Horas Extra</h2>
-    <?php if (isset($mensaje)): ?>
+    <?php if ($mensaje): ?>
         <div class="alert alert-info"><?= htmlspecialchars($mensaje); ?></div>
     <?php endif; ?>
     <div class="table-responsive">

@@ -16,8 +16,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fechaHoy = date('Y-m-d');
     $file_url = '';
 
-    // Manejo del archivo comprobante (opcional)
-    if (isset($_FILES['comprobante']) && $_FILES['comprobante']['error'] == UPLOAD_ERR_OK) {
+    // COMPROBANTE OBLIGATORIO
+    if (
+        !isset($_FILES['comprobante']) ||
+        $_FILES['comprobante']['error'] != UPLOAD_ERR_OK ||
+        empty($_FILES['comprobante']['name'])
+    ) {
+        $mensaje = "Debes adjuntar un comprobante obligatorio (PDF, imagen o documento).";
+        $tipoMensaje = 'danger';
+    } else {
+        // Subida de archivo
         $carpeta_destino = "uploads/comprobantes/";
         if (!is_dir($carpeta_destino)) {
             mkdir($carpeta_destino, 0777, true);
@@ -25,67 +33,67 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
         $file_url = $carpeta_destino . uniqid('incapacidad_') . "." . $ext;
         move_uploaded_file($_FILES['comprobante']['tmp_name'], $file_url);
-    }
 
-    // Obtener el id_tipo_permiso_fk correspondiente a "Incapacidad"
-    $stmt = $conn->prepare("SELECT idTipoPermiso FROM tipo_permiso_cat WHERE Descripcion = 'Incapacidad' LIMIT 1");
-    $stmt->execute();
-    $stmt->bind_result($tipo_incapacidad_id);
-    $stmt->fetch();
-    $stmt->close();
-
-    // Obtener el id_estado_fk (pendiente)
-    $stmt = $conn->prepare("SELECT idEstado FROM estado_cat WHERE Descripcion = 'Pendiente' LIMIT 1");
-    $stmt->execute();
-    $stmt->bind_result($estado_pendiente_id);
-    $stmt->fetch();
-    $stmt->close();
-
-    // Validaciones
-    $dias_nuevos = 0;
-    if ($fecha_inicio && $fecha_fin) {
-        $dias_nuevos = (strtotime($fecha_fin) - strtotime($fecha_inicio)) / 86400 + 1;
-    }
-    if ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
-        $mensaje = "No puedes solicitar incapacidad en fechas anteriores a hoy.";
-        $tipoMensaje = 'danger';
-    } elseif ($fecha_fin < $fecha_inicio) {
-        $mensaje = "La fecha de fin no puede ser menor que la de inicio.";
-        $tipoMensaje = 'danger';
-    } elseif ($dias_nuevos <= 0) {
-        $mensaje = "La cantidad de días debe ser mayor a 0.";
-        $tipoMensaje = 'danger';
-    } else {
-        $stmt = $conn->prepare("INSERT INTO permisos (
-            id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url
-        ) VALUES (?, ?, ?, NOW(), ?, ?, 'Incapacidad', ?, ?)");
-        $stmt->bind_param(
-            "iiissss",
-            $colaborador_id,
-            $tipo_incapacidad_id,
-            $estado_pendiente_id,
-            $fecha_inicio,
-            $fecha_fin,
-            $comentario,
-            $file_url
-        );
-        if ($stmt->execute()) {
-            $mensaje = "✅ Solicitud de incapacidad enviada correctamente.";
-            $tipoMensaje = 'success';
-        } else {
-            $mensaje = "Error al enviar la solicitud.";
-            $tipoMensaje = 'danger';
-        }
+        // Obtener el id_tipo_permiso_fk correspondiente a "Incapacidad"
+        $stmt = $conn->prepare("SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad' LIMIT 1");
+        $stmt->execute();
+        $stmt->bind_result($tipo_incapacidad_id);
+        $stmt->fetch();
         $stmt->close();
+
+        // Obtener el id_estado_fk (pendiente)
+        $stmt = $conn->prepare("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'pendiente' LIMIT 1");
+        $stmt->execute();
+        $stmt->bind_result($estado_pendiente_id);
+        $stmt->fetch();
+        $stmt->close();
+
+        // Validaciones
+        $dias_nuevos = 0;
+        if ($fecha_inicio && $fecha_fin) {
+            $dias_nuevos = (strtotime($fecha_fin) - strtotime($fecha_inicio)) / 86400 + 1;
+        }
+        if ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
+            $mensaje = "No puedes solicitar incapacidad en fechas anteriores a hoy.";
+            $tipoMensaje = 'danger';
+        } elseif ($fecha_fin < $fecha_inicio) {
+            $mensaje = "La fecha de fin no puede ser menor que la de inicio.";
+            $tipoMensaje = 'danger';
+        } elseif ($dias_nuevos <= 0) {
+            $mensaje = "La cantidad de días debe ser mayor a 0.";
+            $tipoMensaje = 'danger';
+        } else {
+            $stmt = $conn->prepare("INSERT INTO permisos (
+                id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url
+            ) VALUES (?, ?, ?, NOW(), ?, ?, 'Incapacidad', ?, ?)");
+            $stmt->bind_param(
+                "iiissss",
+                $colaborador_id,
+                $tipo_incapacidad_id,
+                $estado_pendiente_id,
+                $fecha_inicio,
+                $fecha_fin,
+                $comentario,
+                $file_url
+            );
+            if ($stmt->execute()) {
+                $mensaje = "✅ Solicitud de incapacidad enviada correctamente.";
+                $tipoMensaje = 'success';
+            } else {
+                $mensaje = "Error al enviar la solicitud.";
+                $tipoMensaje = 'danger';
+            }
+            $stmt->close();
+        }
     }
 }
 
-// 2. Historial de incapacidades (de permisos)
+// Historial de incapacidades (de permisos)
 $historial = [];
 $sql = "SELECT fecha_inicio, fecha_fin, DATEDIFF(fecha_fin, fecha_inicio) + 1 as cantidad, observaciones, comprobante_url, id_estado_fk
         FROM permisos
         WHERE id_colaborador_fk = ?
-          AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE Descripcion = 'Incapacidad')
+          AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad')
         ORDER BY fecha_inicio DESC";
 $stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $colaborador_id);
@@ -103,7 +111,7 @@ while ($stmt->fetch()) {
 }
 $stmt->close();
 
-// Opcional: Obtener lista de estados para mostrar texto en vez de id_estado_fk
+// Lista de estados para mostrar texto
 $estados = [];
 $resEstados = $conn->query("SELECT idEstado, Descripcion FROM estado_cat");
 while ($row = $resEstados->fetch_assoc()) {
@@ -111,6 +119,7 @@ while ($row = $resEstados->fetch_assoc()) {
 }
 ?>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
     body { background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important; }
     .center-container { min-height: 95vh; display: flex; align-items: center; justify-content: center; }
@@ -163,7 +172,8 @@ while ($row = $resEstados->fetch_assoc()) {
                 </div>
                 <div class="mb-4 input-group">
                     <span class="input-group-text"><i class="bi bi-paperclip"></i></span>
-                    <input type="file" name="comprobante" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" data-bs-toggle="tooltip" title="Subir comprobante (PDF, imagen, doc)">
+                    <input type="file" name="comprobante" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" required data-bs-toggle="tooltip" title="Subir comprobante (PDF, imagen, doc)">
+                    <div class="invalid-feedback">El comprobante es obligatorio.</div>
                 </div>
                 <button type="submit" id="btnEnviar" class="btn btn-app mt-1">
                     <span id="btnText"><i class="bi bi-send"></i> Enviar Solicitud</span>
@@ -194,7 +204,7 @@ while ($row = $resEstados->fetch_assoc()) {
                         <tr>
                             <td><?= $row['inicio'] ? date('d/m/Y', strtotime($row['inicio'])) : '-' ?></td>
                             <td><?= $row['fin'] ? date('d/m/Y', strtotime($row['fin'])) : '-' ?></td>
-                            <td><?= $row['cantidad'] ?? '-' ?></td>
+                            <td><?= htmlspecialchars($row['cantidad']) ?></td>
                             <td><?= htmlspecialchars($row['obs']) ?></td>
                             <td>
                                 <?php if ($row['comprobante']): ?>
@@ -204,11 +214,11 @@ while ($row = $resEstados->fetch_assoc()) {
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <span class="badge bg-<?= 
-                                    (isset($estados[$row['estado']]) && $estados[$row['estado']] == 'Aprobado') ? 'success' : (
-                                        (isset($estados[$row['estado']]) && $estados[$row['estado']] == 'Rechazado') ? 'danger' : 'secondary'
-                                    );
-                                ?>">
+                                <?php
+                                $estado = isset($estados[$row['estado']]) ? strtolower($estados[$row['estado']]) : 'pendiente';
+                                $color = ($estado == 'aprobado') ? 'success' : (($estado == 'rechazado') ? 'danger' : 'warning text-dark');
+                                ?>
+                                <span class="badge bg-<?= $color ?>">
                                     <?= isset($estados[$row['estado']]) ? $estados[$row['estado']] : 'Pendiente' ?>
                                 </span>
                             </td>
@@ -225,6 +235,7 @@ while ($row = $resEstados->fetch_assoc()) {
     </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.js"></script>
 <script>
 var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))

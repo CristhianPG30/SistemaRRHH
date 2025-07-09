@@ -28,7 +28,7 @@ $mensaje_tipo = '';
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['aprobar'])) {
         $idHorasExtra = intval($_POST['idHorasExtra']);
-        $sqlUpdate = "UPDATE horas_extra SET estado = 'Aprobado' WHERE idPermisos = ?";
+        $sqlUpdate = "UPDATE horas_extra SET estado = 'Aprobada', Observaciones = 'Aprobada por la jefatura el ".date('d-m-Y H:i')."' WHERE idPermisos = ?";
         $stmt = $conn->prepare($sqlUpdate);
         $stmt->bind_param("i", $idHorasExtra);
         if ($stmt->execute()) {
@@ -83,60 +83,15 @@ $result = $stmt->get_result();
     <style>
         body { background: #eef3fa; }
         .container { padding-top: 40px; }
-        .custom-title {
-            font-weight: 900;
-            color: #176cb1;
-            font-size: 2.25rem;
-            text-align: center;
-            margin-bottom: 12px;
-        }
-        .subtitle {
-            font-size: 1.1rem;
-            color: #5d6c7c;
-            text-align: center;
-            margin-bottom: 35px;
-        }
-        .table thead th {
-            background: linear-gradient(90deg, #24c6ff 50%, #2176ae 100%);
-            color: #fff;
-            border-top: 2px solid #176cb1;
-            font-weight: 700;
-        }
-        .table-hover tbody tr:hover {
-            background-color: #f4faff;
-        }
-        .badge-estado {
-            font-size: 0.97em;
-            font-weight: 600;
-            padding: .40em .7em;
-        }
-        .acciones-btns {
-            display: flex;
-            gap: 6px;
-            align-items: center;
-            justify-content: center;
-        }
-        .btn-approve {
-            background: linear-gradient(90deg,#32d583 60%,#228b22 100%);
-            border: none;
-            color: #fff;
-            border-radius: 10px;
-            padding: 7px 15px;
-            font-weight: 600;
-            font-size: 1em;
-            transition: background .2s;
-        }
+        .custom-title { font-weight: 900; color: #176cb1; font-size: 2.25rem; text-align: center; margin-bottom: 12px; }
+        .subtitle { font-size: 1.1rem; color: #5d6c7c; text-align: center; margin-bottom: 35px; }
+        .table thead th { background: linear-gradient(90deg, #24c6ff 50%, #2176ae 100%); color: #fff; border-top: 2px solid #176cb1; font-weight: 700; }
+        .table-hover tbody tr:hover { background-color: #f4faff; }
+        .badge-estado { font-size: 0.97em; font-weight: 600; padding: .40em .7em; }
+        .acciones-btns { display: flex; gap: 6px; align-items: center; justify-content: center; }
+        .btn-approve { background: linear-gradient(90deg,#32d583 60%,#228b22 100%); border: none; color: #fff; border-radius: 10px; padding: 7px 15px; font-weight: 600; font-size: 1em; transition: background .2s; }
         .btn-approve:hover { background: #29a960; }
-        .btn-reject {
-            background: linear-gradient(90deg,#ff5b5b 60%,#d90429 100%);
-            border: none;
-            color: #fff;
-            border-radius: 10px;
-            padding: 7px 15px;
-            font-weight: 600;
-            font-size: 1em;
-            transition: background .2s;
-        }
+        .btn-reject { background: linear-gradient(90deg,#ff5b5b 60%,#d90429 100%); border: none; color: #fff; border-radius: 10px; padding: 7px 15px; font-weight: 600; font-size: 1em; transition: background .2s; }
         .btn-reject:hover { background: #d90429; }
     </style>
 </head>

@@ -4,19 +4,19 @@ include 'db.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $colaborador_id = $_SESSION['colaborador_id'] ?? null;
-$persona_id = $_SESSION['persona_id'] ?? null; // Si lo necesitas para otras tablas
+$persona_id = $_SESSION['persona_id'] ?? null;
 $mensaje = '';
 $tipoMensaje = '';
 
-// Si tienes un catálogo de tipos de permiso:
+// --- Catálogo de tipos de permiso (solo los permitidos para esta sección, no vacaciones ni incapacidades) ---
 $tipos = [];
-$res_tipos = $conn->query("SELECT idTipoPermiso, Descripcion FROM tipo_permiso_cat");
+$res_tipos = $conn->query("SELECT idTipoPermiso, Descripcion FROM tipo_permiso_cat WHERE LOWER(Descripcion) NOT IN ('vacaciones','incapacidad','incapacidades')");
 while($row = $res_tipos->fetch_assoc()) {
     $tipos[] = $row;
 }
 
-// Si tienes un catálogo de estados:
-$estado_pendiente = 1; // Ajusta si en tu tabla estado_cat, el ID para 'Pendiente' es otro
+// --- ID estado pendiente ---
+$estado_pendiente = 3; // según tu tabla estado_cat
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fecha_inicio = $_POST['fecha_inicio'] ?? '';
@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fechaHoy = date('Y-m-d');
     $archivo = '';
 
-    // Validación básica
+    // Validación
     if ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
         $mensaje = "No puedes solicitar permisos en fechas anteriores a hoy.";
         $tipoMensaje = 'danger';
@@ -41,7 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $mensaje = "Debes seleccionar un tipo de permiso.";
         $tipoMensaje = 'danger';
     } else {
-        // Manejar archivo (opcional)
+        // Manejar archivo
         if (isset($_FILES['comprobante']) && $_FILES['comprobante']['error'] == UPLOAD_ERR_OK) {
             $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
             $nombre_archivo = 'permiso_' . time() . '_' . rand(100,999) . '.' . $ext;
@@ -65,9 +65,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 }
 
-// Historial de permisos del colaborador
+// --- Historial de permisos del colaborador (excluye vacaciones e incapacidad) ---
 $historial = [];
-$sql = "SELECT fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url, id_tipo_permiso_fk, id_estado_fk FROM permisos WHERE id_colaborador_fk = ? ORDER BY fecha_inicio DESC";
+$sql = "SELECT fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url, id_tipo_permiso_fk, id_estado_fk 
+        FROM permisos 
+        WHERE id_colaborador_fk = ? 
+          AND id_tipo_permiso_fk IN (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) NOT IN ('vacaciones','incapacidad','incapacidades'))
+        ORDER BY fecha_inicio DESC";
 $stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $colaborador_id);
 $stmt->execute();
@@ -85,7 +89,7 @@ while ($stmt->fetch()) {
 }
 $stmt->close();
 
-// Obtener nombre de tipo de permiso
+// --- Mostrar tipo de permiso ---
 function nombreTipoPermiso($id, $tipos) {
     foreach($tipos as $tipo) {
         if ($tipo['idTipoPermiso'] == $id) return $tipo['Descripcion'];
@@ -93,12 +97,14 @@ function nombreTipoPermiso($id, $tipos) {
     return 'Desconocido';
 }
 
-// Obtener estado (puedes personalizar esto con tu tabla estado_cat)
-function nombreEstado($id) {
-    if ($id == 1) return 'Pendiente';
-    if ($id == 2) return 'Aprobado';
-    if ($id == 3) return 'Rechazado';
-    return 'Desconocido';
+// --- Badge color estado ---
+function estadoBadge($id) {
+    switch ($id) {
+        case 3: return '<span class="badge bg-warning text-dark">Pendiente</span>';
+        case 4: return '<span class="badge bg-success">Aprobado</span>';
+        case 5: return '<span class="badge bg-danger">Rechazado</span>';
+        default: return '<span class="badge bg-secondary">Desconocido</span>';
+    }
 }
 ?>
 
@@ -203,7 +209,7 @@ function nombreEstado($id) {
                             <td><?= $row['fin'] ? date('d/m/Y', strtotime($row['fin'])) : '-' ?></td>
                             <td><?= htmlspecialchars($row['motivo']) ?></td>
                             <td><?= htmlspecialchars($row['obs']) ?></td>
-                            <td><?= nombreEstado($row['estado']) ?></td>
+                            <td><?= estadoBadge($row['estado']) ?></td>
                             <td>
                                 <?php if ($row['archivo']): ?>
                                     <a href="uploads/<?= htmlspecialchars($row['archivo']) ?>" target="_blank" class="btn btn-sm btn-outline-info"><i class="bi bi-file-earmark-arrow-down"></i> Ver</a>

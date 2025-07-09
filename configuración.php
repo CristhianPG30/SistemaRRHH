@@ -16,7 +16,10 @@ $configFilePath = 'js/configuracion.json';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Manejo de Configuración General
     if (isset($_POST['update_config'])) {
-        $configData = ['nombre_empresa' => $_POST['nombre_empresa'], 'tarifa_hora_extra' => floatval($_POST['tarifa_hora_extra'])];
+        $configData = [
+            'nombre_empresa' => $_POST['nombre_empresa'],
+            'tarifa_hora_extra' => floatval($_POST['tarifa_hora_extra'])
+        ];
         if (file_put_contents($configFilePath, json_encode($configData, JSON_PRETTY_PRINT))) {
             $message = 'Configuración del sistema actualizada con éxito.';
             $message_type = 'success';
@@ -42,8 +45,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt = $conn->prepare("INSERT INTO tipo_deduccion_cat (Descripcion) VALUES (?)");
                 $stmt->bind_param("s", $descripcion_db);
             }
-            if ($stmt->execute()) { $message = 'La deducción ha sido guardada con éxito.'; $message_type = 'success'; }
-            else { $message = 'Error al guardar la deducción.'; $message_type = 'danger'; }
+            if ($stmt->execute()) {
+                $message = 'La deducción ha sido guardada con éxito.';
+                $message_type = 'success';
+            } else {
+                $message = 'Error al guardar la deducción.';
+                $message_type = 'danger';
+            }
             $stmt->close();
         }
     }
@@ -51,8 +59,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = intval($_POST['delete_deduction_id']);
         $stmt = $conn->prepare("DELETE FROM tipo_deduccion_cat WHERE idTipoDeduccion = ?");
         $stmt->bind_param("i", $id);
-        if ($stmt->execute()) { $message = 'Deducción eliminada con éxito.'; $message_type = 'success'; }
-        else { $message = 'Error al eliminar la deducción.'; $message_type = 'danger'; }
+        if ($stmt->execute()) {
+            $message = 'Deducción eliminada con éxito.';
+            $message_type = 'success';
+        } else {
+            $message = 'Error al eliminar la deducción.';
+            $message_type = 'danger';
+        }
         $stmt->close();
     }
     // Manejo de Jerarquías
@@ -66,14 +79,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message_type = 'danger';
         } else {
             if ($id > 0) {
+                // EDITAR
                 $stmt = $conn->prepare("UPDATE jerarquia SET Colaborador_idColaborador = ?, Jefe_idColaborador = ?, Departamento_idDepartamento = ? WHERE idJerarquia = ?");
                 $stmt->bind_param("iiii", $colaborador_id, $jefe_id, $departamento_id, $id);
             } else {
-                $stmt = $conn->prepare("INSERT INTO jerarquia (Colaborador_idColaborador, Jefe_idColaborador, Departamento_idDepartamento) VALUES (?, ?, ?)");
-                $stmt->bind_param("iii", $colaborador_id, $jefe_id, $departamento_id);
+                // NUEVO: obtén el siguiente ID disponible
+                $result = $conn->query("SELECT MAX(idJerarquia) AS maxid FROM jerarquia");
+                $row = $result->fetch_assoc();
+                $new_id = ($row['maxid'] ?? 0) + 1;
+
+                $stmt = $conn->prepare("INSERT INTO jerarquia (idJerarquia, Colaborador_idColaborador, Jefe_idColaborador, Departamento_idDepartamento) VALUES (?, ?, ?, ?)");
+                $stmt->bind_param("iiii", $new_id, $colaborador_id, $jefe_id, $departamento_id);
             }
-            if ($stmt->execute()) { $message = 'Jerarquía guardada con éxito.'; $message_type = 'success'; }
-            else { $message = 'Error al guardar la jerarquía. Es posible que el colaborador ya esté asignado.'; $message_type = 'danger'; }
+            if ($stmt->execute()) {
+                $message = 'Jerarquía guardada con éxito.';
+                $message_type = 'success';
+            } else {
+                $message = 'Error al guardar la jerarquía. Es posible que el colaborador ya esté asignado.';
+                $message_type = 'danger';
+            }
             $stmt->close();
         }
     }
@@ -81,8 +105,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = intval($_POST['delete_jerarquia_id']);
         $stmt = $conn->prepare("DELETE FROM jerarquia WHERE idJerarquia = ?");
         $stmt->bind_param("i", $id);
-        if ($stmt->execute()) { $message = 'Jerarquía eliminada con éxito.'; $message_type = 'success'; }
-        else { $message = 'Error al eliminar la jerarquía.'; $message_type = 'danger'; }
+        if ($stmt->execute()) {
+            $message = 'Jerarquía eliminada con éxito.';
+            $message_type = 'success';
+        } else {
+            $message = 'Error al eliminar la jerarquía.';
+            $message_type = 'danger';
+        }
         $stmt->close();
     }
 }
@@ -105,61 +134,18 @@ $departamentos = $conn->query("SELECT d.* FROM departamento d JOIN estado_cat e 
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Poppins', sans-serif; background-color: #f4f7fc; }
-        .card { 
-            border: none;
-            border-radius: 1rem; 
-            box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.05);
-            transition: all 0.3s ease-in-out;
-            height: 100%;
-        }
+        .card { border: none; border-radius: 1rem; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.05); transition: all 0.3s ease-in-out; height: 100%; }
         .card:hover { transform: translateY(-5px); }
-        .card-header {
-            background-color: #ffffff;
-            border-bottom: 1px solid #e9ecef;
-            padding: 1.25rem 1.5rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .card-header h5 {
-            font-weight: 600;
-            color: #343a40;
-            margin: 0;
-            display: flex;
-            align-items: center;
-        }
-        .card-header h5 i {
-            color: #4e73df;
-            font-size: 1.5rem;
-        }
+        .card-header { background-color: #ffffff; border-bottom: 1px solid #e9ecef; padding: 1.25rem 1.5rem; display: flex; justify-content: space-between; align-items: center; }
+        .card-header h5 { font-weight: 600; color: #343a40; margin: 0; display: flex; align-items: center; }
+        .card-header h5 i { color: #4e73df; font-size: 1.5rem; }
         .list-group-item .badge { font-size: 0.9em; }
-
-        /* Estilos mejorados para la tarjeta de Jerarquías */
-        .jerarquia-item {
-            padding: 1rem;
-            border-bottom: 1px solid #e9ecef;
-        }
-        .jerarquia-item:last-child {
-            border-bottom: none;
-        }
-        .colaborador-info {
-            font-weight: 600;
-            color: #212529;
-        }
-        .departamento-info {
-            font-size: 0.85rem;
-            color: #6c757d;
-        }
-        .jefe-info {
-            display: flex;
-            align-items: center;
-            font-size: 0.9rem;
-            color: #495057;
-        }
-        .jefe-info i {
-            margin-right: 0.5rem;
-            color: #6c757d;
-        }
+        .jerarquia-item { padding: 1rem; border-bottom: 1px solid #e9ecef; }
+        .jerarquia-item:last-child { border-bottom: none; }
+        .colaborador-info { font-weight: 600; color: #212529; }
+        .departamento-info { font-size: 0.85rem; color: #6c757d; }
+        .jefe-info { display: flex; align-items: center; font-size: 0.9rem; color: #495057; }
+        .jefe-info i { margin-right: 0.5rem; color: #6c757d; }
     </style>
 </head>
 <body>
