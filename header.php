@@ -9,7 +9,6 @@ if (!isset($_SESSION['username'])) {
 $username = $_SESSION['username'];
 $rol = $_SESSION['rol'] ?? 0; // 1=Admin, 2=Colaborador, 3=Jefatura, 4=Recursos Humanos
 
-// Función para determinar si un enlace de navegación está activo
 function isActive($pageNames) {
     $currentPage = basename($_SERVER['PHP_SELF']);
     if (!is_array($pageNames)) {
@@ -18,7 +17,6 @@ function isActive($pageNames) {
     return in_array($currentPage, $pageNames) ? 'active' : '';
 }
 
-// Función para obtener el nombre del rol (CORREGIDA)
 function rolName($rol) {
     return [
         1 => 'Administrador',
@@ -143,7 +141,8 @@ function rolName($rol) {
             <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Permisos</a>
             <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i> Evaluaciones</a>
             <a class="nav-link <?= isActive('liquidación.php') ?>" href="liquidación.php"><i class="bi bi-bank"></i> Liquidaciones</a>
-            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift"></i> Aguinaldos</a>
+            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift-fill"></i> Aguinaldos</a>
+            <a class="nav-link <?= isActive('generar_aguinaldo.php') ?>" href="generar_aguinaldo.php"><i class="bi bi-calculator-fill"></i> Generar Aguinaldo</a>
             <a class="nav-link <?= isActive('reporte_global.php') ?>" href="reporte_global.php"><i class="bi bi-bar-chart"></i> Reportes Globales</a>
         
         <?php elseif ($rol == 2): // ROL COLABORADOR ?>
@@ -176,7 +175,8 @@ function rolName($rol) {
             <a class="nav-link <?= isActive('permisos.php') ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Permisos</a>
             <a class="nav-link <?= isActive('evaluacion.php') ?>" href="evaluacion.php"><i class="bi bi-star-fill"></i> Evaluaciones</a>
             <a class="nav-link <?= isActive('liquidación.php') ?>" href="liquidación.php"><i class="bi bi-bank"></i> Liquidaciones</a>
-            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift"></i> Aguinaldos</a>
+            <a class="nav-link <?= isActive('aguinaldo.php') ?>" href="aguinaldo.php"><i class="bi bi-gift-fill"></i> Aguinaldos</a>
+            <a class="nav-link <?= isActive('generar_aguinaldo.php') ?>" href="generar_aguinaldo.php"><i class="bi bi-calculator-fill"></i> Generar Aguinaldo</a>
             <a class="nav-link <?= isActive('reporte_global.php') ?>" href="reporte_global.php"><i class="bi bi-bar-chart"></i> Reportes Globales</a>
         
         <?php else: // OTRO USUARIO O FALLBACK ?>

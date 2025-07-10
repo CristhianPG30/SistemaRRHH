@@ -8,6 +8,7 @@ if (!isset($_SESSION['username'])) {
 
 $roles_permitidos = [1, 3, 4];
 $usuario_rol = $_SESSION['rol'] ?? 0;
+$id_jefe_logueado = $_SESSION['colaborador_id'] ?? 0;
 
 if (!in_array($usuario_rol, $roles_permitidos)) {
     include 'header.php';
@@ -26,42 +27,75 @@ require_once 'db.php';
 $msg = "";
 $msg_type = "success";
 
-// Obtener colaboradores activos
+// --- OBTENER COLABORADORES SEGÚN ROL ---
 $colaboradores = [];
-$res = $conn->query("SELECT c.idColaborador, p.Nombre, p.Apellido1, p.Apellido2
-                     FROM colaborador c
-                     INNER JOIN persona p ON c.id_persona_fk = p.idPersona
-                     WHERE c.activo = 1
-                     ORDER BY p.Nombre ASC");
-while ($row = $res->fetch_assoc()) $colaboradores[] = $row;
+$sql_colaboradores = "SELECT c.idColaborador, p.Nombre, p.Apellido1, p.Apellido2
+                      FROM colaborador c
+                      INNER JOIN persona p ON c.id_persona_fk = p.idPersona
+                      WHERE c.activo = 1";
 
-// Procesar formulario
+if ($usuario_rol == 3) { // Si es Jefatura, filtrar por su ID
+    $sql_colaboradores .= " AND c.id_jefe_fk = ?";
+    $stmt = $conn->prepare($sql_colaboradores);
+    $stmt->bind_param("i", $id_jefe_logueado);
+} else { // Si es Admin o RRHH, no se aplica filtro de jefe
+    $stmt = $conn->prepare($sql_colaboradores);
+}
+
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
+    $colaboradores[] = $row;
+}
+$stmt->close();
+
+
+// --- PROCESAR FORMULARIO ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['id_colaborador'])) {
-    $id_colaborador = intval($_POST['id_colaborador']);
+    $id_colaborador_evaluado = intval($_POST['id_colaborador']);
     $fecha = date('Y-m-d');
     $puntualidad = intval($_POST['puntualidad']);
     $desempeno = intval($_POST['desempeno']);
     $trabajo_equipo = intval($_POST['trabajo_equipo']);
     $comentarios = trim($_POST['comentarios']);
-
-    // Calificación: promedio de las 3 métricas (redondeado)
+    
+    // Calificación promedio
     $calificacion = round(($puntualidad + $desempeno + $trabajo_equipo) / 3);
 
-    if ($id_colaborador && $calificacion) {
-        $stmt = $conn->prepare("INSERT INTO evaluaciones 
-            (Colaborador_idColaborador, Fecharealizacion, Calificacion, Comentarios)
-            VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("isis", $id_colaborador, $fecha, $calificacion, $comentarios);
-        if ($stmt->execute()) {
+    // --- VALIDACIÓN DE PERMISOS ANTES DE GUARDAR ---
+    $puede_evaluar = false;
+    if ($usuario_rol == 1 || $usuario_rol == 4) {
+        $puede_evaluar = true; // Admin y RRHH pueden evaluar a todos
+    } elseif ($usuario_rol == 3) {
+        // Verificar que el colaborador evaluado pertenece al equipo del jefe
+        $stmt_verify = $conn->prepare("SELECT COUNT(*) FROM colaborador WHERE idColaborador = ? AND id_jefe_fk = ?");
+        $stmt_verify->bind_param("ii", $id_colaborador_evaluado, $id_jefe_logueado);
+        $stmt_verify->execute();
+        $stmt_verify->bind_result($count);
+        $stmt_verify->fetch();
+        $stmt_verify->close();
+        if ($count > 0) {
+            $puede_evaluar = true;
+        }
+    }
+    
+    if ($id_colaborador_evaluado && $calificacion && $puede_evaluar) {
+        $stmt_insert = $conn->prepare("INSERT INTO evaluaciones (Colaborador_idColaborador, Fecharealizacion, Calificacion, Comentarios) VALUES (?, ?, ?, ?)");
+        $stmt_insert->bind_param("isis", $id_colaborador_evaluado, $fecha, $calificacion, $comentarios);
+        if ($stmt_insert->execute()) {
             $msg = "¡Evaluación registrada correctamente!";
             $msg_type = "success";
         } else {
             $msg = "Error al guardar la evaluación.";
             $msg_type = "danger";
         }
-        $stmt->close();
+        $stmt_insert->close();
     } else {
-        $msg = "Todos los campos son obligatorios.";
+        if (!$puede_evaluar) {
+            $msg = "Error: No tienes permiso para evaluar a este colaborador.";
+        } else {
+            $msg = "Todos los campos de calificación son obligatorios.";
+        }
         $msg_type = "danger";
     }
 }
@@ -176,7 +210,7 @@ body {
         </div>
         <?php if ($msg): ?>
             <div class="alert alert-<?= $msg_type ?> alert-dismissible fade show text-center" role="alert" style="font-size:1.08rem;">
-                <?= $msg ?>
+                <?= htmlspecialchars($msg) ?>
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             </div>
         <?php endif; ?>
@@ -189,11 +223,15 @@ body {
                 </label>
                 <select name="id_colaborador" id="id_colaborador" class="form-select select-lg" required>
                     <option value="">Seleccione un colaborador...</option>
-                    <?php foreach ($colaboradores as $col): ?>
-                        <option value="<?= $col['idColaborador'] ?>">
-                            <?= htmlspecialchars($col['Nombre'].' '.$col['Apellido1'].' '.$col['Apellido2']) ?>
-                        </option>
-                    <?php endforeach; ?>
+                    <?php if (empty($colaboradores) && $usuario_rol == 3): ?>
+                        <option value="" disabled>No tienes colaboradores a tu cargo.</option>
+                    <?php else: ?>
+                        <?php foreach ($colaboradores as $col): ?>
+                            <option value="<?= $col['idColaborador'] ?>">
+                                <?= htmlspecialchars($col['Nombre'].' '.$col['Apellido1'].' '.$col['Apellido2']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
                 </select>
             </div>
             <div class="col-12 d-flex justify-content-between align-items-center gap-2">
@@ -252,7 +290,6 @@ body {
 
 <?php include 'footer.php'; ?>
 
-<!-- Animate.css y Bootstrap JS para tooltips -->
 <link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>

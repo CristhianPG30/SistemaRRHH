@@ -77,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     $idPersona = isset($_POST['idPersona']) ? intval($_POST['idPersona']) : 0;
     $is_edit_mode = ($idPersona > 0);
     
+    // --- Saneamiento y Recolección de Datos ---
     $nombre = trim($_POST['nombre']);
     $apellido1 = trim($_POST['apellido1']);
     $apellido2 = trim($_POST['apellido2']);
@@ -93,22 +94,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
     $nacionalidad_post = intval($_POST['nacionalidad']);
     $genero_post = intval($_POST['genero']);
     $id_jefe_fk = isset($_POST['id_jefe_fk']) ? intval($_POST['id_jefe_fk']) : 0;
-    $salario_bruto_post = isset($_POST['salario_bruto']) ? floatval($_POST['salario_bruto']) : 0;
+    $salario_bruto_post = isset($_POST['salario_bruto']) ? floatval($_POST['salario_bruto']) : 0.0;
 
+    // --- Inicio de Validaciones ---
     $errors = [];
     if (empty($nombre) || !preg_match("/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/u", $nombre)) $errors[] = "El nombre es inválido.";
-    if (empty($correo_electronico_post) || !filter_var($correo_electronico_post, FILTER_VALIDATE_EMAIL)) $errors[] = "El correo es inválido.";
+    if (empty($cedula_post) || !preg_match("/^[0-9-]+$/", $cedula_post)) $errors[] = "La identificación solo puede contener números y guiones.";
+    if(strlen($telefono_numero) < 8) $errors[] = "El teléfono debe contener al menos 8 dígitos.";
+    if (empty($correo_electronico_post) || !filter_var($correo_electronico_post, FILTER_VALIDATE_EMAIL)) $errors[] = "El correo electrónico es inválido.";
     if (empty($fecha_nac) || (new DateTime())->diff(new DateTime($fecha_nac))->y < 18) $errors[] = "La persona debe ser mayor de 18 años.";
     if (empty($provincia_id_post) || empty($canton_id_post) || empty($distrito_id_post)) $errors[] = "Debe seleccionar la ubicación completa.";
-    if (!$is_edit_mode && empty($id_jefe_fk)) $errors[] = "Debe seleccionar un jefe.";
-    if ($salario_bruto_post < 0) $errors[] = "El salario bruto no puede ser negativo.";
+    if ($salario_bruto_post < 0) $errors[] = "El salario bruto no puede ser un valor negativo.";
+    if (!$is_edit_mode && empty($id_jefe_fk)) $errors[] = "Debe seleccionar un jefe para el nuevo colaborador.";
 
     if (!empty($errors)) {
         $_SESSION['flash_message'] = ['type' => 'danger', 'message' => implode('<br>', $errors)];
     } else {
         $conn->begin_transaction();
         try {
-            // Dirección
             $stmt_dir = $conn->prepare("SELECT id_direccion_fk FROM persona WHERE idPersona = ?");
             $stmt_dir->bind_param("i", $idPersona); $stmt_dir->execute(); $result_dir = $stmt_dir->get_result();
             $direccion_id = ($result_dir->num_rows > 0) ? $result_dir->fetch_assoc()['id_direccion_fk'] : null;
@@ -120,14 +123,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
             if (!$direccion_id) $direccion_id = $stmt->insert_id;
             $stmt->close();
             
-            // Teléfono
             $stmt_tel = $conn->prepare("SELECT id_Telefono FROM telefono WHERE numero = ?");
             $stmt_tel->bind_param("s", $telefono_numero); $stmt_tel->execute(); $tel_res = $stmt_tel->get_result();
             $telefono_id = ($tel_res->num_rows > 0) ? $tel_res->fetch_assoc()['id_Telefono'] : null;
             if(!$telefono_id && !empty($telefono_numero)) { $stmt_insert_tel = $conn->prepare("INSERT INTO telefono (numero) VALUES (?)"); $stmt_insert_tel->bind_param("s", $telefono_numero); $stmt_insert_tel->execute(); $telefono_id = $stmt_insert_tel->insert_id; $stmt_insert_tel->close(); }
             $stmt_tel->close();
             
-            // Persona
             if ($is_edit_mode) { $sql = "UPDATE persona SET Nombre=?, Apellido1=?, Apellido2=?, Cedula=?, Fecha_nac=?, id_direccion_fk=?, id_estado_civil_fk=?, id_nacionalidad_fk=?, id_genero_cat_fk=? WHERE idPersona=?"; $stmt = $conn->prepare($sql); $stmt->bind_param("sssssiiiii", $nombre, $apellido1, $apellido2, $cedula_post, $fecha_nac, $direccion_id, $estado_civil_post, $nacionalidad_post, $genero_post, $idPersona);
             } else { $sql = "INSERT INTO persona (Nombre, Apellido1, Apellido2, Cedula, Fecha_nac, id_direccion_fk, id_estado_civil_fk, id_nacionalidad_fk, id_genero_cat_fk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"; $stmt = $conn->prepare($sql); $stmt->bind_param("sssssiiii", $nombre, $apellido1, $apellido2, $cedula_post, $fecha_nac, $direccion_id, $estado_civil_post, $nacionalidad_post, $genero_post); }
             $stmt->execute();
@@ -139,7 +140,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
             $conn->execute_query("DELETE FROM persona_telefonos WHERE id_persona_fk=?", [$current_persona_id]);
             if($telefono_id) $conn->execute_query("INSERT INTO persona_telefonos (id_persona_fk, id_telefono_fk) VALUES (?,?)", [$current_persona_id, $telefono_id]);
 
-            // Colaborador
             $stmt_col_check = $conn->prepare("SELECT idColaborador FROM colaborador WHERE id_persona_fk = ?");
             $stmt_col_check->bind_param("i", $current_persona_id); $stmt_col_check->execute(); $col_res = $stmt_col_check->get_result();
             if ($col_res->num_rows > 0) {
@@ -214,13 +214,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
                 <input type="hidden" name="idPersona" value="<?= htmlspecialchars($idPersona); ?>">
                 
                 <div class="card p-4">
+                    <div id="validation-alert" class="alert alert-danger d-none" role="alert"></div>
+
                     <div class="form-step active" data-step-content="1">
                         <h5 class="mb-4">Paso 1: Información Personal</h5>
                         <div class="row">
-                            <div class="col-md-4 mb-3"><label for="nombre" class="form-label required">Nombre</label><input type="text" class="form-control" name="nombre" value="<?= htmlspecialchars($nombre); ?>" required></div>
-                            <div class="col-md-4 mb-3"><label for="apellido1" class="form-label required">Primer Apellido</label><input type="text" class="form-control" name="apellido1" value="<?= htmlspecialchars($apellido1); ?>" required></div>
-                            <div class="col-md-4 mb-3"><label for="apellido2" class="form-label required">Segundo Apellido</label><input type="text" class="form-control" name="apellido2" value="<?= htmlspecialchars($apellido2); ?>" required></div>
-                            <div class="col-md-6 mb-3"><label for="cedula" class="form-label required">Identificación</label><input type="text" class="form-control" name="cedula" value="<?= htmlspecialchars($cedula); ?>" required></div>
+                            <div class="col-md-4 mb-3"><label for="nombre" class="form-label required">Nombre</label><input type="text" class="form-control" name="nombre" value="<?= htmlspecialchars($nombre); ?>" pattern="^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$" title="El nombre solo puede contener letras y espacios." required></div>
+                            <div class="col-md-4 mb-3"><label for="apellido1" class="form-label required">Primer Apellido</label><input type="text" class="form-control" name="apellido1" value="<?= htmlspecialchars($apellido1); ?>" pattern="^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$" title="El apellido solo puede contener letras y espacios." required></div>
+                            <div class="col-md-4 mb-3"><label for="apellido2" class="form-label required">Segundo Apellido</label><input type="text" class="form-control" name="apellido2" value="<?= htmlspecialchars($apellido2); ?>" pattern="^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$" title="El apellido solo puede contener letras y espacios." required></div>
+                            <div class="col-md-6 mb-3"><label for="cedula" class="form-label required">Identificación</label><input type="text" class="form-control" name="cedula" value="<?= htmlspecialchars($cedula); ?>" pattern="^[0-9-]+$" title="La identificación solo puede contener números y guiones." required></div>
                             <div class="col-md-6 mb-3"><label for="fecha_nac" class="form-label required">Fecha de Nacimiento</label><input type="date" class="form-control" name="fecha_nac" value="<?= htmlspecialchars($fecha_nac); ?>" required></div>
                         </div>
                         <div class="d-flex justify-content-end mt-3">
@@ -233,7 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
                         <h5 class="mb-4">Paso 2: Contacto y Ubicación</h5>
                         <div class="row">
                             <div class="col-md-6 mb-3"><label for="correo_electronico" class="form-label required">Correo Electrónico</label><input type="email" class="form-control" name="correo_electronico" value="<?= htmlspecialchars($correo_electronico); ?>" required></div>
-                            <div class="col-md-6 mb-3"><label for="telefono" class="form-label required">Teléfono</label><input type="text" class="form-control" name="telefono" placeholder="0000-0000" value="<?= htmlspecialchars($telefono); ?>" required></div>
+                            <div class="col-md-6 mb-3"><label for="telefono" class="form-label required">Teléfono</label><input type="tel" class="form-control" name="telefono" placeholder="0000-0000" value="<?= htmlspecialchars($telefono); ?>" minlength="8" title="El teléfono debe tener al menos 8 dígitos." required></div>
                         </div>
                         <div class="row">
                             <div class="col-md-4 mb-3"><label for="provincia" class="form-label required">Provincia</label><select class="form-select" id="provincia" name="provincia" required></select></div>
@@ -256,7 +258,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
                             <?php endif; ?>
                             <div class="col-md-6 mb-3">
                                 <label for="salario_bruto" class="form-label required">Salario Bruto (₡)</label>
-                                <input type="number" step="0.01" min="0" class="form-control" name="salario_bruto" value="<?= htmlspecialchars($salario_bruto); ?>" required>
+                                <input type="number" step="0.01" min="0" class="form-control" name="salario_bruto" value="<?= htmlspecialchars($salario_bruto); ?>" required title="El salario no puede ser negativo.">
                             </div>
                             <div class="col-md-4 mb-3"><label for="estado_civil" class="form-label required">Estado Civil</label><select class="form-select" name="estado_civil" required><option value="">Seleccione...</option><?php foreach ($opciones_estado_civil as $id => $desc): ?><option value="<?= $id; ?>" <?= ($estado_civil_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
                             <div class="col-md-4 mb-3"><label for="nacionalidad" class="form-label required">Nacionalidad</label><select class="form-select" name="nacionalidad" required><option value="">Seleccione...</option><?php foreach ($opciones_nacionalidad as $id => $desc): ?><option value="<?= $id; ?>" <?= ($nacionalidad_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
@@ -276,105 +278,144 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['idPersona'])) {
         document.addEventListener('DOMContentLoaded', function () {
             const stepper = document.querySelector('.form-stepper');
             const formSteps = document.querySelectorAll('.form-step');
+            const alertContainer = document.getElementById('validation-alert');
             let currentStep = 1;
 
             function goToStep(stepNumber) {
+                // Ocultar alerta al cambiar de paso
+                alertContainer.classList.add('d-none');
                 currentStep = stepNumber;
+                
                 formSteps.forEach(step => step.classList.remove('active'));
                 document.querySelector(`[data-step-content="${currentStep}"]`).classList.add('active');
 
                 stepper.querySelectorAll('.step').forEach((step, index) => {
                     step.classList.remove('active', 'completed');
-                    if(index + 1 < currentStep) step.classList.add('completed');
-                    if(index + 1 === currentStep) step.classList.add('active');
+                    if (index + 1 < currentStep) step.classList.add('completed');
+                    if (index + 1 === currentStep) step.classList.add('active');
                 });
             }
 
+            // --- FUNCIÓN DE VALIDACIÓN DEFINITIVA ---
             function validateStep(stepIndex) {
                 const currentFormStep = document.querySelector(`[data-step-content="${stepIndex}"]`);
                 let isValid = true;
-                currentFormStep.querySelectorAll('[required]').forEach(input => {
+                let errorMessages = [];
+
+                currentFormStep.querySelectorAll('input[required], select[required], textarea[required]').forEach(input => {
                     input.classList.remove('is-invalid');
+                    let hasError = false;
+                    let errorMessage = '';
+                    const label = input.closest('.mb-3').querySelector('label')?.innerText.replace(' *', '') || 'Un campo';
+
                     if (!input.value.trim()) {
-                        input.classList.add('is-invalid');
+                        hasError = true;
+                        errorMessage = `${label} es un campo obligatorio.`;
+                    } else {
+                        // Validar patrones con RegEx
+                        if (input.hasAttribute('pattern')) {
+                            const regex = new RegExp(input.pattern);
+                            if (!regex.test(input.value)) {
+                                hasError = true;
+                                errorMessage = input.getAttribute('title') || `El formato para ${label} es incorrecto.`;
+                            }
+                        }
+                        // Validar longitud mínima
+                        if (input.hasAttribute('minlength')) {
+                            if (input.value.replace(/[^0-9]/g, "").length < input.minLength) {
+                                 hasError = true;
+                                 errorMessage = input.getAttribute('title') || `El campo ${label} es muy corto.`;
+                            }
+                        }
+                         // Validar número mínimo
+                        if (input.type === 'number' && input.hasAttribute('min')) {
+                           if (parseFloat(input.value) < parseFloat(input.min)) {
+                                hasError = true;
+                                errorMessage = input.getAttribute('title') || `${label} no puede ser un valor negativo.`;
+                           }
+                        }
+                    }
+                    
+                    if (hasError) {
                         isValid = false;
+                        input.classList.add('is-invalid');
+                        if (!errorMessages.includes(errorMessage)) {
+                            errorMessages.push(errorMessage);
+                        }
                     }
                 });
+                
+                if (!isValid) {
+                    alertContainer.innerHTML = '<strong>Por favor, corrija los siguientes errores:</strong><br>' + errorMessages.join('<br>');
+                    alertContainer.classList.remove('d-none');
+                } else {
+                    alertContainer.classList.add('d-none');
+                }
+                
                 return isValid;
             }
 
             document.querySelectorAll('[data-nav]').forEach(button => {
                 button.addEventListener('click', () => {
                     const direction = button.dataset.nav === 'next' ? 1 : -1;
-                    if (direction === 1 && !validateStep(currentStep)) return;
+                    if (direction === 1) {
+                         if (!validateStep(currentStep)) return;
+                    }
                     const nextStep = currentStep + direction;
                     if (nextStep > 0 && nextStep <= formSteps.length) {
                         goToStep(nextStep);
                     }
                 });
             });
-            
-            stepper.querySelectorAll('.step').forEach(step_el => {
+
+            stepper.querySelectorAll('.step').forEach((step_el, index) => {
+                const targetStep = parseInt(step_el.dataset.stepTarget);
+                if (index < currentStep) {
+                    step_el.classList.add('completed');
+                }
                 step_el.addEventListener('click', () => {
-                    const targetStep = parseInt(step_el.dataset.stepTarget);
-                    if(targetStep < currentStep){
+                    if (step_el.classList.contains('completed')) {
                         goToStep(targetStep);
                     }
                 });
             });
-
+            
+            // Lógica para selectores de ubicación
             const provinciaSelect = document.getElementById('provincia');
             const cantonSelect = document.getElementById('canton');
             const distritoSelect = document.getElementById('distrito');
-            const initialData = {
-                provincia: '<?= $provincia_id ?? "" ?>',
-                canton: '<?= $canton_id ?? "" ?>',
-                distrito: '<?= $distrito_id ?? "" ?>'
-            };
+            const initialData = { provincia: '<?= $provincia_id ?? "" ?>', canton: '<?= $canton_id ?? "" ?>', distrito: '<?= $distrito_id ?? "" ?>' };
             let ubicacionesData = {};
 
             function populateSelect(select, items, selectedId) {
                 select.innerHTML = '<option value="">Seleccione...</option>';
-                for (const id in items) {
-                    select.add(new Option(items[id], id));
-                }
-                if (selectedId) {
-                    select.value = selectedId;
-                }
+                for (const id in items) { select.add(new Option(items[id], id)); }
+                if (selectedId) { select.value = selectedId; }
             }
 
-            fetch('js/ubicaciones.json')
-                .then(response => response.json())
-                .then(data => {
-                    ubicacionesData = data;
-                    populateSelect(provinciaSelect, data.provincias, initialData.provincia);
-                    if (initialData.provincia) {
-                        provinciaSelect.dispatchEvent(new Event('change'));
-                    }
-                });
+            fetch('js/ubicaciones.json').then(r => r.json()).then(data => {
+                ubicacionesData = data;
+                populateSelect(provinciaSelect, data.provincias, initialData.provincia);
+                if (initialData.provincia) provinciaSelect.dispatchEvent(new Event('change'));
+            });
 
             provinciaSelect.addEventListener('change', () => {
                 const cantones = ubicacionesData.cantones[provinciaSelect.value] || {};
                 populateSelect(cantonSelect, cantones, initialData.canton);
-                 if (initialData.canton) {
-                    cantonSelect.dispatchEvent(new Event('change'));
-                    initialData.canton = null;
-                }
+                if (initialData.canton) { cantonSelect.dispatchEvent(new Event('change')); initialData.canton = null; }
             });
 
             cantonSelect.addEventListener('change', () => {
                 const distritos = ubicacionesData.distritos[provinciaSelect.value]?.[cantonSelect.value] || {};
                 populateSelect(distritoSelect, distritos, initialData.distrito);
-                if (initialData.distrito) {
-                    initialData.distrito = null;
-                }
+                if (initialData.distrito) initialData.distrito = null;
             });
 
             document.getElementById('personaForm').addEventListener('submit', event => {
                 if (!validateStep(1) || !validateStep(2) || !validateStep(3)) {
                     event.preventDefault();
                     event.stopPropagation();
-                    alert('Por favor, revise los campos marcados en rojo en todos los pasos.');
+                    // El mensaje de error ya habrá sido mostrado
                 }
             });
         });
