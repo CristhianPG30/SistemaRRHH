@@ -9,6 +9,7 @@ if (!isset($_SESSION['username']) || !isset($_SESSION['persona_id'])) {
 
 // 1. Obtener idColaborador del jefe logueado
 $persona_id = $_SESSION['persona_id'];
+$idColaboradorJefe = 0; // Inicializar para evitar errores
 $stmt = $conn->prepare("SELECT idColaborador FROM colaborador WHERE id_persona_fk = ?");
 $stmt->bind_param("i", $persona_id);
 $stmt->execute();
@@ -78,109 +79,118 @@ $result = $stmt->get_result();
 <head>
     <meta charset="UTF-8">
     <title>Solicitudes de Horas Extra | Equipo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        body { background: #eef3fa; }
-        .container { padding-top: 40px; }
-        .custom-title { font-weight: 900; color: #176cb1; font-size: 2.25rem; text-align: center; margin-bottom: 12px; }
-        .subtitle { font-size: 1.1rem; color: #5d6c7c; text-align: center; margin-bottom: 35px; }
-        .table thead th { background: linear-gradient(90deg, #24c6ff 50%, #2176ae 100%); color: #fff; border-top: 2px solid #176cb1; font-weight: 700; }
-        .table-hover tbody tr:hover { background-color: #f4faff; }
-        .badge-estado { font-size: 0.97em; font-weight: 600; padding: .40em .7em; }
-        .acciones-btns { display: flex; gap: 6px; align-items: center; justify-content: center; }
-        .btn-approve { background: linear-gradient(90deg,#32d583 60%,#228b22 100%); border: none; color: #fff; border-radius: 10px; padding: 7px 15px; font-weight: 600; font-size: 1em; transition: background .2s; }
-        .btn-approve:hover { background: #29a960; }
-        .btn-reject { background: linear-gradient(90deg,#ff5b5b 60%,#d90429 100%); border: none; color: #fff; border-radius: 10px; padding: 7px 15px; font-weight: 600; font-size: 1em; transition: background .2s; }
-        .btn-reject:hover { background: #d90429; }
+        body { background: #f4f8fd; font-family: 'Poppins', sans-serif; }
+        .container { padding-top: 40px; margin-left: 280px; }
+        .titulo-seccion {
+            font-weight: 900;
+            color: #176cb1;
+            font-size: 2.1rem;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        .subtitulo-seccion {
+            color: #1e4d6d;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .card {
+            border-radius: 1.2rem;
+            box-shadow: 0 2px 18px 0 rgba(44,62,80,.09);
+            border: none;
+        }
+        .table th, .table td { vertical-align: middle; text-align: center; }
+        .badge-estado { font-size: .95em; padding: .4em .75em; border-radius: .5rem; font-weight: 600;}
+        .acciones-btns { display: flex; gap: 8px; justify-content: center;}
+        .btn-aprobar { background: #28a745; color: #fff; border: none; width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;}
+        .btn-aprobar:hover { background: #218838; }
+        .btn-rechazar { background: #dc3545; color: #fff; border: none; width: 38px; height: 38px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;}
+        .btn-rechazar:hover { background: #c82333; }
     </style>
 </head>
 <body>
 <?php include 'header.php'; ?>
 
 <div class="container">
-    <div class="custom-title">
-        <i class="bi bi-people-fill"></i>
-        Solicitudes de Horas Extra de Mi Equipo
-    </div>
-    <div class="subtitle">
-        Visualiza, aprueba o rechaza las solicitudes de tus colaboradores directos de forma fácil y rápida.
-    </div>
+    <div class="titulo-seccion"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</div>
+    <div class="subtitulo-seccion">Revisa y gestiona las solicitudes de horas extra justificadas por tu equipo.</div>
 
     <?php if ($mensaje): ?>
-        <div class="alert alert-<?= $mensaje_tipo ?> alert-dismissible fade show" role="alert">
-            <?= htmlspecialchars($mensaje) ?>
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>
+    <div class="alert alert-<?= $mensaje_tipo ?> alert-dismissible fade show" role="alert">
+        <?= htmlspecialchars($mensaje) ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
     <?php endif; ?>
 
-    <div class="card shadow-sm border-0 rounded-4">
-        <div class="card-body">
-            <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 rounded-4">
-                    <thead>
-                        <tr>
-                            <th>Colaborador</th>
-                            <th>Fecha</th>
-                            <th>Horas Extra</th>
-                            <th>Motivo</th>
-                            <th>Estado</th>
-                            <th class="text-center">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php if ($result->num_rows > 0): ?>
-                            <?php while ($row = $result->fetch_assoc()): ?>
-                                <tr>
-                                    <td><i class="bi bi-person-badge"></i> <?= htmlspecialchars($row['Nombre'].' '.$row['Apellido1']) ?></td>
-                                    <td><i class="bi bi-calendar-event"></i> <?= htmlspecialchars($row['Fecha']) ?></td>
-                                    <td><i class="bi bi-clock-history"></i> <?= htmlspecialchars($row['cantidad_horas']) ?> horas</td>
-                                    <td><?= htmlspecialchars($row['Motivo']) ?></td>
-                                    <td>
-                                        <span class="badge badge-estado text-bg-warning">Justificada</span>
-                                    </td>
-                                    <td>
-                                        <div class="acciones-btns">
-                                            <form method="post" style="display:inline;">
-                                                <input type="hidden" name="idHorasExtra" value="<?= $row['idPermisos'] ?>">
-                                                <button type="submit" name="aprobar" class="btn-approve" title="Aprobar"><i class="bi bi-check-circle"></i></button>
-                                            </form>
-                                            <button class="btn-reject" data-bs-toggle="modal" data-bs-target="#rechazoModal"
-                                                    onclick="setRechazoId(<?= $row['idPermisos'] ?>)" title="Rechazar">
-                                                <i class="bi bi-x-circle"></i>
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            <?php endwhile; ?>
-                        <?php else: ?>
+    <div class="card p-4">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Colaborador</th>
+                        <th>Fecha</th>
+                        <th>Horas Extra</th>
+                        <th>Motivo</th>
+                        <th>Estado</th>
+                        <th class="text-center">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if ($result->num_rows > 0): ?>
+                        <?php while ($row = $result->fetch_assoc()): ?>
                             <tr>
-                                <td colspan="6" class="text-center text-secondary">
-                                    <i class="bi bi-emoji-neutral"></i> No hay solicitudes pendientes de tu equipo.
+                                <td><?= htmlspecialchars($row['Nombre'].' '.$row['Apellido1']) ?></td>
+                                <td><?= htmlspecialchars(date('d/m/Y', strtotime($row['Fecha']))) ?></td>
+                                <td><?= htmlspecialchars($row['cantidad_horas']) ?> horas</td>
+                                <td><?= htmlspecialchars($row['Motivo']) ?></td>
+                                <td>
+                                    <span class="badge badge-estado bg-warning text-dark">Justificada</span>
+                                </td>
+                                <td>
+                                    <div class="acciones-btns">
+                                        <form method="post" class="d-inline">
+                                            <input type="hidden" name="idHorasExtra" value="<?= $row['idPermisos'] ?>">
+                                            <button type="submit" name="aprobar" class="btn btn-aprobar" title="Aprobar"><i class="bi bi-check-lg"></i></button>
+                                        </form>
+                                        <button class="btn btn-rechazar" data-bs-toggle="modal" data-bs-target="#rechazoModal"
+                                                onclick="setRechazoId(<?= $row['idPermisos'] ?>)" title="Rechazar">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                        <?php endwhile; ?>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="6" class="text-center text-muted p-4">
+                                <i class="bi bi-emoji-smile fs-4"></i><br>
+                                ¡Excelente! No hay solicitudes de horas extra pendientes en tu equipo.
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
         </div>
     </div>
 </div>
 
-<!-- Modal para motivo de rechazo -->
 <div class="modal fade" id="rechazoModal" tabindex="-1" aria-labelledby="rechazoModalLabel" aria-hidden="true">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <form method="post">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="rechazoModalLabel"><i class="bi bi-x-octagon"></i> Motivo del Rechazo</h5>
+                    <h5 class="modal-title" id="rechazoModalLabel"><i class="bi bi-x-octagon-fill text-danger me-2"></i>Motivo del Rechazo</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
                     <input type="hidden" name="idHorasExtra" id="rechazoId" value="">
                     <div class="mb-3">
-                        <label for="motivo_rechazo" class="form-label">Escribe el motivo del rechazo:</label>
-                        <textarea class="form-control" id="motivo_rechazo" name="motivo_rechazo" required></textarea>
+                        <label for="motivo_rechazo" class="form-label">Por favor, especifica el motivo del rechazo:</label>
+                        <textarea class="form-control" id="motivo_rechazo" name="motivo_rechazo" rows="3" required></textarea>
                     </div>
                 </div>
                 <div class="modal-footer">
