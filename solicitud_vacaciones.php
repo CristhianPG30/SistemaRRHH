@@ -6,7 +6,7 @@ if (!isset($_SESSION['username'])) {
 }
 include 'db.php';
 
-$persona_id = $_SESSION['persona_id'];
+$persona_id = $_SESSION['persona_id'] ?? 0;
 $mensaje = '';
 $mensaje_tipo = '';
 
@@ -19,20 +19,25 @@ function obtenerDiasFeriados() {
 }
 
 function calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin) {
+    if (empty($fecha_inicio) || empty($fecha_fin)) return 0;
     $dias_laborales = 0;
     $feriados = obtenerDiasFeriados();
     
-    $periodo = new DatePeriod(
-        new DateTime($fecha_inicio),
-        new DateInterval('P1D'),
-        (new DateTime($fecha_fin))->modify('+1 day')
-    );
+    try {
+        $periodo = new DatePeriod(
+            new DateTime($fecha_inicio),
+            new DateInterval('P1D'),
+            (new DateTime($fecha_fin))->modify('+1 day')
+        );
 
-    foreach ($periodo as $fecha) {
-        // No contar sábados (6) ni domingos (7)
-        if ($fecha->format('N') < 6 && !in_array($fecha->format('Y-m-d'), $feriados)) {
-            $dias_laborales++;
+        foreach ($periodo as $fecha) {
+            // No contar sábados (6) ni domingos (7)
+            if ($fecha->format('N') < 6 && !in_array($fecha->format('Y-m-d'), $feriados)) {
+                $dias_laborales++;
+            }
         }
+    } catch (Exception $e) {
+        return 0;
     }
     return $dias_laborales;
 }
@@ -40,12 +45,20 @@ function calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin) {
 
 
 // Traer idColaborador y fecha ingreso
-$stmt = $conn->prepare("SELECT idColaborador, fecha_ingreso FROM colaborador WHERE id_persona_fk = ?");
-$stmt->bind_param("i", $persona_id);
-$stmt->execute();
-$stmt->bind_result($idColaborador, $fecha_ingreso);
-$stmt->fetch();
-$stmt->close();
+$idColaborador = 0;
+$fecha_ingreso = date('Y-m-d');
+if ($persona_id > 0) {
+    $stmt = $conn->prepare("SELECT idColaborador, fecha_ingreso FROM colaborador WHERE id_persona_fk = ?");
+    $stmt->bind_param("i", $persona_id);
+    $stmt->execute();
+    $result_colab = $stmt->get_result();
+    if($row_colab = $result_colab->fetch_assoc()){
+        $idColaborador = $row_colab['idColaborador'];
+        $fecha_ingreso = $row_colab['fecha_ingreso'];
+    }
+    $stmt->close();
+}
+
 
 // Calcular días disponibles
 $fecha_ingreso = $fecha_ingreso ?: date('Y-m-d');
@@ -55,18 +68,22 @@ $dt2 = new DateTime($hoy);
 $meses_laborados = ($dt1->diff($dt2)->y * 12) + $dt1->diff($dt2)->m;
 $dias_acumulados = floor($meses_laborados * 1); // 1 día por mes
 
-$sql_tomados = "SELECT SUM(DATEDIFF(fecha_fin, fecha_inicio) + 1) as total
-FROM permisos 
-WHERE id_colaborador_fk = ? 
-  AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'vacaciones')
-  AND id_estado_fk = 4"; // Estado Aprobado
-$stmt = $conn->prepare($sql_tomados);
-$stmt->bind_param("i", $idColaborador);
-$stmt->execute();
-$stmt->bind_result($dias_tomados);
-$stmt->fetch();
-$stmt->close();
-$dias_tomados = $dias_tomados ?: 0;
+$dias_tomados = 0;
+if ($idColaborador > 0) {
+    $sql_tomados = "SELECT SUM(DATEDIFF(fecha_fin, fecha_inicio) + 1) as total
+    FROM permisos 
+    WHERE id_colaborador_fk = ? 
+      AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'vacaciones')
+      AND id_estado_fk = 4"; // Estado Aprobado
+    $stmt_tomados = $conn->prepare($sql_tomados);
+    $stmt_tomados->bind_param("i", $idColaborador);
+    $stmt_tomados->execute();
+    $stmt_tomados->bind_result($dias_tomados_db);
+    $stmt_tomados->fetch();
+    $stmt_tomados->close();
+    $dias_tomados = $dias_tomados_db ?: 0;
+}
+
 $dias_disponibles = max($dias_acumulados - $dias_tomados, 0);
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
@@ -78,48 +95,90 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
     $idTipoPermiso = $resultTipo->fetch_assoc()['idTipoPermiso'] ?? 1;
 
     $resultEstado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion)='pendiente' LIMIT 1");
-    $idEstado = $resultEstado->fetch_assoc()['idEstado'] ?? 3;
+    $idEstadoPendiente = $resultEstado->fetch_assoc()['idEstado'] ?? 3;
 
     $dias_solicitados_laborales = calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin);
 
-    // --- INICIO: VALIDACIONES MEJORADAS ---
-    if ($dias_solicitados_laborales <= 0) {
-        $mensaje = "Las fechas seleccionadas no contienen días laborales válidos (son fines de semana o feriados).";
+    if (empty($fecha_inicio) || empty($fecha_fin)) {
+        $mensaje = "Debes seleccionar una fecha de inicio y de fin.";
+        $tipoMensaje = 'warning';
+    } elseif ($fecha_fin < $fecha_inicio) {
+        $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
+        $tipoMensaje = 'danger';
+    } elseif ($dias_solicitados_laborales <= 0) {
+        $mensaje = "Las fechas seleccionadas no contienen días laborales válidos.";
         $tipoMensaje = 'danger';
     } elseif ($dias_solicitados_laborales > $dias_disponibles) {
         $mensaje = "No tienes suficientes días disponibles para esta solicitud ($dias_solicitados_laborales días solicitados vs $dias_disponibles disponibles).";
         $tipoMensaje = 'danger';
-    } elseif ($fecha_inicio && $fecha_fin && $idColaborador) {
-        // --- FIN: VALIDACIONES MEJORADAS ---
-        $stmt = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_inicio, fecha_fin, motivo) VALUES (?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("iiisss", $idColaborador, $idTipoPermiso, $idEstado, $fecha_inicio, $fecha_fin, $motivo);
-        if ($stmt->execute()) {
-            $mensaje = "¡Solicitud de vacaciones enviada correctamente!";
-            $mensaje_tipo = 'success';
+    } elseif ($idColaborador > 0) {
+        // --- INICIO DE LA CORRECCIÓN ---
+        // 1. Revisa si ya existe una solicitud RECHAZADA en la fecha de inicio
+        $stmt_check_rechazada = $conn->prepare("SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND fecha_inicio = ? AND id_estado_fk = 5 LIMIT 1");
+        $stmt_check_rechazada->bind_param("is", $idColaborador, $fecha_inicio);
+        $stmt_check_rechazada->execute();
+        $stmt_check_rechazada->store_result();
+        
+        if ($stmt_check_rechazada->num_rows > 0) {
+            // Si existe una rechazada, la ACTUALIZA para reutilizarla
+            $stmt_update = $conn->prepare("UPDATE permisos SET id_estado_fk = ?, fecha_fin = ?, motivo = ?, fecha_solicitud = NOW(), observaciones = '' WHERE id_colaborador_fk = ? AND fecha_inicio = ? AND id_estado_fk = 5");
+            $stmt_update->bind_param("issis", $idEstadoPendiente, $fecha_fin, $motivo, $idColaborador, $fecha_inicio);
+            if ($stmt_update->execute()) {
+                $mensaje = "¡Solicitud de vacaciones reenviada correctamente!";
+                $mensaje_tipo = 'success';
+            } else {
+                $mensaje = "Error al reenviar la solicitud: " . $conn->error;
+                $mensaje_tipo = 'danger';
+            }
+            $stmt_update->close();
         } else {
-            $mensaje = "Error al registrar la solicitud. Es posible que las fechas se crucen con un permiso ya existente.";
-            $mensaje_tipo = 'danger';
+            // Si no hay rechazada, revisa si hay pendientes o aprobadas
+            $check_sql = "SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND id_estado_fk != 5 AND ? <= fecha_fin AND ? >= fecha_inicio";
+            $check_stmt = $conn->prepare($check_sql);
+            $check_stmt->bind_param("iss", $idColaborador, $fecha_inicio, $fecha_fin);
+            $check_stmt->execute();
+            $check_stmt->store_result();
+
+            if ($check_stmt->num_rows > 0) {
+                $mensaje = "Ya tienes una solicitud que se cruza con las fechas seleccionadas. Revisa tus solicitudes pendientes o aprobadas.";
+                $tipoMensaje = 'danger';
+            } else {
+                // Si no hay conflictos, INSERTA una nueva solicitud
+                $stmt_insert = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo) VALUES (?, ?, ?, NOW(), ?, ?, ?)");
+                $stmt_insert->bind_param("iiisss", $idColaborador, $idTipoPermiso, $idEstadoPendiente, $fecha_inicio, $fecha_fin, $motivo);
+                if ($stmt_insert->execute()) {
+                    $mensaje = "¡Solicitud de vacaciones enviada correctamente!";
+                    $mensaje_tipo = 'success';
+                    header("Location: " . $_SERVER['PHP_SELF']);
+                    exit();
+                } else {
+                    $mensaje = "Error al registrar la solicitud: " . $conn->error;
+                    $mensaje_tipo = 'danger';
+                }
+                $stmt_insert->close();
+            }
+            $check_stmt->close();
         }
-        $stmt->close();
-    } else {
-        $mensaje = "Completa todos los campos antes de enviar la solicitud.";
-        $mensaje_tipo = 'warning';
+        $stmt_check_rechazada->close();
+        // --- FIN DE LA CORRECCIÓN ---
     }
 }
 
-$stmt = $conn->prepare("
-SELECT p.fecha_inicio, p.fecha_fin, DATEDIFF(p.fecha_fin, p.fecha_inicio) + 1 as dias_solicitados, ec.Descripcion AS estado, p.observaciones, p.motivo
-FROM permisos p
-JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
-JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
-WHERE tpc.Descripcion = 'Vacaciones' AND p.id_colaborador_fk = ?
-ORDER BY p.fecha_inicio DESC");
-$stmt->bind_param("i", $idColaborador);
-$stmt->execute();
-$result = $stmt->get_result();
 $solicitudes = [];
-while ($row = $result->fetch_assoc()) { $solicitudes[] = $row; }
-$stmt->close();
+if ($idColaborador > 0) {
+    $stmt_historial = $conn->prepare("
+    SELECT p.fecha_inicio, p.fecha_fin, DATEDIFF(p.fecha_fin, p.fecha_inicio) + 1 as dias_solicitados, ec.Descripcion AS estado, p.observaciones, p.motivo
+    FROM permisos p
+    JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
+    JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
+    WHERE tpc.Descripcion = 'Vacaciones' AND p.id_colaborador_fk = ?
+    ORDER BY p.fecha_inicio DESC");
+    $stmt_historial->bind_param("i", $idColaborador);
+    $stmt_historial->execute();
+    $result_historial = $stmt_historial->get_result();
+    while ($row_historial = $result_historial->fetch_assoc()) { $solicitudes[] = $row_historial; }
+    $stmt_historial->close();
+}
 $conn->close();
 
 $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_contents('js/feriados.json'), true) : [];
@@ -258,11 +317,11 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
                             <label class="form-label">Fecha de Inicio</label>
-                            <input type="date" name="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
+                            <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Fecha de Fin</label>
-                            <input type="date" name="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
+                            <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -274,8 +333,18 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
                     </button>
                 </form>
 
-                <?php if ($mensaje): ?>
-                    <div class="alert alert-<?= $mensaje_tipo ?> mt-4 text-center"><?= htmlspecialchars($mensaje) ?></div>
+                <?php if ($mensaje): 
+                    $icon_class = 'bi-info-circle-fill'; // default
+                    if ($mensaje_tipo == 'success') {
+                        $icon_class = 'bi-check-circle-fill';
+                    } elseif ($mensaje_tipo == 'danger' || $mensaje_tipo == 'warning') {
+                        $icon_class = 'bi-exclamation-triangle-fill';
+                    }
+                ?>
+                    <div class="alert alert-<?= $mensaje_tipo ?> d-flex align-items-center mt-4" role="alert">
+                        <i class="bi <?= $icon_class ?> me-2" style="font-size:1.2rem;"></i>
+                        <div class="fw-bold"><?= htmlspecialchars($mensaje) ?></div>
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -329,8 +398,17 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // --- SCRIPT DEL CALENDARIO Y TOOLTIPS ---
     document.addEventListener('DOMContentLoaded', function() {
+        const fechaInicioInput = document.getElementById('fecha_inicio');
+        const fechaFinInput = document.getElementById('fecha_fin');
+        
+        fechaInicioInput.addEventListener('change', function() {
+            if (fechaFinInput.value < fechaInicioInput.value) {
+                fechaFinInput.value = fechaInicioInput.value;
+            }
+            fechaFinInput.min = fechaInicioInput.value;
+        });
+
         const feriados = <?php echo json_encode($feriados_para_js); ?>;
         const calendarContainer = document.getElementById('calendar-container');
         const now = new Date();
@@ -405,7 +483,6 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
             }
             calendarContainer.appendChild(body);
             
-            // Re-inicializar tooltips para los días feriados y el botón de info principal
             const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
             [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
         }
