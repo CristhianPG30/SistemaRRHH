@@ -10,6 +10,35 @@ $persona_id = $_SESSION['persona_id'];
 $mensaje = '';
 $mensaje_tipo = '';
 
+// --- INICIO: FUNCIONES DE CÁLCULO MEJORADAS ---
+function obtenerDiasFeriados() {
+    $feriadosFilePath = 'js/feriados.json';
+    if (!file_exists($feriadosFilePath)) return [];
+    $feriados_data = json_decode(file_get_contents($feriadosFilePath), true);
+    return is_array($feriados_data) ? array_column($feriados_data, 'fecha') : [];
+}
+
+function calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin) {
+    $dias_laborales = 0;
+    $feriados = obtenerDiasFeriados();
+    
+    $periodo = new DatePeriod(
+        new DateTime($fecha_inicio),
+        new DateInterval('P1D'),
+        (new DateTime($fecha_fin))->modify('+1 day')
+    );
+
+    foreach ($periodo as $fecha) {
+        // No contar sábados (6) ni domingos (7)
+        if ($fecha->format('N') < 6 && !in_array($fecha->format('Y-m-d'), $feriados)) {
+            $dias_laborales++;
+        }
+    }
+    return $dias_laborales;
+}
+// --- FIN: FUNCIONES DE CÁLCULO MEJORADAS ---
+
+
 // Traer idColaborador y fecha ingreso
 $stmt = $conn->prepare("SELECT idColaborador, fecha_ingreso FROM colaborador WHERE id_persona_fk = ?");
 $stmt->bind_param("i", $persona_id);
@@ -18,20 +47,19 @@ $stmt->bind_result($idColaborador, $fecha_ingreso);
 $stmt->fetch();
 $stmt->close();
 
-// Calcular días acumulados
+// Calcular días disponibles
 $fecha_ingreso = $fecha_ingreso ?: date('Y-m-d');
 $hoy = date('Y-m-d');
 $dt1 = new DateTime($fecha_ingreso);
 $dt2 = new DateTime($hoy);
-$antiguedad_años = $dt1->diff($dt2)->y + ($dt1->diff($dt2)->m / 12);
-$dias_acumulados = floor($antiguedad_años * 15);
+$meses_laborados = ($dt1->diff($dt2)->y * 12) + $dt1->diff($dt2)->m;
+$dias_acumulados = floor($meses_laborados * 1); // 1 día por mes
 
-// Días ya tomados (solo aprobados)
 $sql_tomados = "SELECT SUM(DATEDIFF(fecha_fin, fecha_inicio) + 1) as total
 FROM permisos 
 WHERE id_colaborador_fk = ? 
   AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'vacaciones')
-  AND id_estado_fk = (SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'aprobado')";
+  AND id_estado_fk = 4"; // Estado Aprobado
 $stmt = $conn->prepare($sql_tomados);
 $stmt->bind_param("i", $idColaborador);
 $stmt->execute();
@@ -52,29 +80,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
     $resultEstado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion)='pendiente' LIMIT 1");
     $idEstado = $resultEstado->fetch_assoc()['idEstado'] ?? 3;
 
-    $dias_solicitados = (strtotime($fecha_fin) - strtotime($fecha_inicio)) / 86400 + 1;
+    $dias_solicitados_laborales = calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin);
 
-    $stmt = $conn->prepare("SELECT COUNT(*) FROM permisos WHERE id_colaborador_fk = ? AND fecha_inicio = ?");
-    $stmt->bind_param("is", $idColaborador, $fecha_inicio);
-    $stmt->execute();
-    $stmt->bind_result($existeSolicitud);
-    $stmt->fetch();
-    $stmt->close();
-
-    if ($existeSolicitud > 0) {
-        $mensaje = "Ya tienes una solicitud de vacaciones registrada para esa fecha de inicio.";
-        $mensaje_tipo = 'danger';
-    } elseif ($dias_solicitados > $dias_disponibles) {
-        $mensaje = "No tienes suficientes días disponibles para esta solicitud.";
-        $mensaje_tipo = 'danger';
+    // --- INICIO: VALIDACIONES MEJORADAS ---
+    if ($dias_solicitados_laborales <= 0) {
+        $mensaje = "Las fechas seleccionadas no contienen días laborales válidos (son fines de semana o feriados).";
+        $tipoMensaje = 'danger';
+    } elseif ($dias_solicitados_laborales > $dias_disponibles) {
+        $mensaje = "No tienes suficientes días disponibles para esta solicitud ($dias_solicitados_laborales días solicitados vs $dias_disponibles disponibles).";
+        $tipoMensaje = 'danger';
     } elseif ($fecha_inicio && $fecha_fin && $idColaborador) {
+        // --- FIN: VALIDACIONES MEJORADAS ---
         $stmt = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_inicio, fecha_fin, motivo) VALUES (?, ?, ?, ?, ?, ?)");
         $stmt->bind_param("iiisss", $idColaborador, $idTipoPermiso, $idEstado, $fecha_inicio, $fecha_fin, $motivo);
         if ($stmt->execute()) {
             $mensaje = "¡Solicitud de vacaciones enviada correctamente!";
             $mensaje_tipo = 'success';
         } else {
-            $mensaje = "Error al registrar la solicitud.";
+            $mensaje = "Error al registrar la solicitud. Es posible que las fechas se crucen con un permiso ya existente.";
             $mensaje_tipo = 'danger';
         }
         $stmt->close();
@@ -98,6 +121,8 @@ $solicitudes = [];
 while ($row = $result->fetch_assoc()) { $solicitudes[] = $row; }
 $stmt->close();
 $conn->close();
+
+$feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_contents('js/feriados.json'), true) : [];
 ?>
 
 <!DOCTYPE html>
@@ -116,7 +141,7 @@ $conn->close();
             font-family: 'Poppins', sans-serif;
         }
         .main-container {
-            max-width: 880px;
+            max-width: 1200px;
             margin: 48px auto 0;
             padding: 0 15px;
         }
@@ -139,6 +164,7 @@ $conn->close();
             gap: .8rem;
         }
         .card-title-custom i { color: #3499ea; font-size: 2.2rem; }
+        .card-title-custom .info-icon { font-size: 1.2rem; color: #3498db; cursor: pointer; }
         .text-center { color: #3a6389; }
         .form-label { color: #288cc8; font-weight: 600; }
         .form-control, input[type="date"] { border-radius: 0.9rem; }
@@ -189,6 +215,12 @@ $conn->close();
             margin-bottom: 1rem;
             text-align: center;
         }
+        .calendar { width: 100%; border: 1px solid #dee2e6; border-radius: 1rem; overflow: hidden; }
+        .calendar-header { text-align: center; padding: 10px; background: #5e72e4; color: white; font-weight: bold; }
+        .calendar-body { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background-color: #dee2e6; }
+        .calendar-day, .calendar-weekday { text-align: center; padding: 10px; background-color: white; }
+        .calendar-weekday { font-weight: bold; background: #f8f9fa; }
+        .calendar-day.feriado { background-color: #ffc107; color: black; font-weight: bold; position: relative; cursor: pointer; }
         @media (max-width: 600px) {
             .main-card { padding: 1.1rem 0.3rem 0.9rem 0.3rem; }
             .card-title-custom { font-size: 1.3rem; }
@@ -200,40 +232,60 @@ $conn->close();
 <?php include 'header.php'; ?>
 
 <div class="main-container">
-    <div class="main-card">
-        <div class="card-title-custom animate__animated animate__fadeInDown">
-            <i class="bi bi-sun-fill"></i> Solicitar Vacaciones
+    <div class="row g-4">
+        <div class="col-lg-7">
+            <div class="main-card h-100">
+                <div class="card-title-custom animate__animated animate__fadeInDown">
+                    <i class="bi bi-sun-fill"></i>
+                    <span>Solicitar Vacaciones</span>
+                    <i class="bi bi-info-circle-fill info-icon"
+                       data-bs-toggle="tooltip"
+                       data-bs-html="true"
+                       title="<div class='text-start'>
+                                <strong>Ley de Vacaciones en Costa Rica:</strong><br>
+                                - Tienes derecho a 2 semanas de vacaciones por cada 50 semanas de trabajo (1 día por mes).<br>
+                                - El sistema no te permitirá solicitar vacaciones en días feriados de pago obligatorio.<br>
+                                - El saldo se descuenta una vez que tu solicitud es aprobada por tu jefatura.
+                              </div>">
+                    </i>
+                </div>
+                <p class="text-center mb-4">Planifica tu descanso y gestiona tus días libres.</p>
+
+                <form method="post">
+                    <div class="mb-4 text-center">
+                        <span class="badge-disponibles"><i class="bi bi-check-circle"></i> Disponibles: <?= $dias_disponibles ?> días</span>
+                    </div>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Fecha de Inicio</label>
+                            <input type="date" name="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Fecha de Fin</label>
+                            <input type="date" name="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Comentario (Opcional)</label>
+                        <input type="text" name="motivo" class="form-control" placeholder="Ej: Viaje familiar" maxlength="100">
+                    </div>
+                    <button type="submit" name="solicitar" class="btn btn-submit-custom">
+                        <i class="bi bi-send-fill"></i> Enviar Solicitud
+                    </button>
+                </form>
+
+                <?php if ($mensaje): ?>
+                    <div class="alert alert-<?= $mensaje_tipo ?> mt-4 text-center"><?= htmlspecialchars($mensaje) ?></div>
+                <?php endif; ?>
+            </div>
         </div>
-        <p class="text-center mb-4">Planifica tu descanso y gestiona tus días libres.</p>
-
-        <form method="post">
-            <div class="mb-4 text-center">
-                <span class="badge-disponibles"><i class="bi bi-check-circle"></i> Disponibles: <?= $dias_disponibles ?> días</span>
+        <div class="col-lg-5">
+            <div class="main-card h-100">
+                <div id="calendar-container"></div>
             </div>
-            <div class="row g-3 mb-3">
-                <div class="col-md-6">
-                    <label class="form-label">Fecha de Inicio</label>
-                    <input type="date" name="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
-                </div>
-                <div class="col-md-6">
-                    <label class="form-label">Fecha de Fin</label>
-                    <input type="date" name="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
-                </div>
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Comentario (Opcional)</label>
-                <input type="text" name="motivo" class="form-control" placeholder="Ej: Viaje familiar" maxlength="100">
-            </div>
-            <button type="submit" name="solicitar" class="btn btn-submit-custom">
-                <i class="bi bi-send-fill"></i> Enviar Solicitud
-            </button>
-        </form>
-
-        <?php if ($mensaje): ?>
-            <div class="alert alert-<?= $mensaje_tipo ?> mt-4 text-center"><?= htmlspecialchars($mensaje) ?></div>
-        <?php endif; ?>
+        </div>
     </div>
-
+    
     <div class="main-card mt-4">
         <div class="section-title">
             <i class="bi bi-clock-history"></i> Historial de Solicitudes
@@ -266,7 +318,7 @@ $conn->close();
                                 else echo '<span class="badge bg-info">'.htmlspecialchars($sol['estado']).'</span>';
                                 ?>
                             </td>
-                            <td><?= htmlspecialchars($sol['motivo']) ?: '-' ?></td>
+                            <td><?= htmlspecialchars($sol['motivo'] ?: '-') ?></td>
                         </tr>
                     <?php endforeach; endif; ?>
                 </tbody>
@@ -276,5 +328,90 @@ $conn->close();
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // --- SCRIPT DEL CALENDARIO Y TOOLTIPS ---
+    document.addEventListener('DOMContentLoaded', function() {
+        const feriados = <?php echo json_encode($feriados_para_js); ?>;
+        const calendarContainer = document.getElementById('calendar-container');
+        const now = new Date();
+        let currentMonth = now.getMonth();
+        let currentYear = now.getFullYear();
+
+        function renderCalendar(month, year) {
+            calendarContainer.innerHTML = '';
+            const header = document.createElement('div');
+            header.className = 'calendar-header d-flex justify-content-between align-items-center';
+            
+            const prevButton = document.createElement('button');
+            prevButton.className = 'btn btn-light btn-sm';
+            prevButton.innerHTML = '<i class="bi bi-arrow-left"></i>';
+            prevButton.onclick = () => {
+                currentMonth--;
+                if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+                renderCalendar(currentMonth, currentYear);
+            };
+
+            const nextButton = document.createElement('button');
+            nextButton.className = 'btn btn-light btn-sm';
+            nextButton.innerHTML = '<i class="bi bi-arrow-right"></i>';
+            nextButton.onclick = () => {
+                currentMonth++;
+                if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+                renderCalendar(currentMonth, currentYear);
+            };
+            
+            const title = document.createElement('span');
+            title.textContent = new Date(year, month).toLocaleString('es-CR', { month: 'long', year: 'numeric' });
+            title.className = "mx-2";
+
+            header.appendChild(prevButton);
+            header.appendChild(title);
+            header.appendChild(nextButton);
+            calendarContainer.appendChild(header);
+
+            const body = document.createElement('div');
+            body.className = 'calendar-body';
+            const weekdays = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá'];
+            weekdays.forEach(day => {
+                const dayEl = document.createElement('div');
+                dayEl.className = 'calendar-weekday';
+                dayEl.textContent = day;
+                body.appendChild(dayEl);
+            });
+
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            for (let i = 0; i < firstDay; i++) {
+                const emptyCell = document.createElement('div');
+                emptyCell.className = 'calendar-day';
+                body.appendChild(emptyCell);
+            }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dayCell = document.createElement('div');
+                dayCell.className = 'calendar-day';
+                dayCell.textContent = day;
+                
+                const fechaCompleta = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const feriado = feriados.find(f => f.fecha === fechaCompleta);
+
+                if (feriado) {
+                    dayCell.classList.add('feriado');
+                    dayCell.setAttribute('data-bs-toggle', 'tooltip');
+                    dayCell.setAttribute('data-bs-title', feriado.descripcion);
+                }
+                body.appendChild(dayCell);
+            }
+            calendarContainer.appendChild(body);
+            
+            // Re-inicializar tooltips para los días feriados y el botón de info principal
+            const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+            [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+        }
+
+        renderCalendar(currentMonth, currentYear);
+    });
+</script>
 </body>
 </html>

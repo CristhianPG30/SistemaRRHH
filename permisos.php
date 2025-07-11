@@ -46,12 +46,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// 4. Mostrar solo permisos pendientes de mis subordinados (igual que horas extra)
+// 4. Mostrar solo permisos pendientes de mis subordinados (consulta actualizada)
 $sql = "
 SELECT 
     p.id_colaborador_fk,
     p.fecha_inicio,
     p.fecha_fin,
+    p.hora_inicio,
+    p.hora_fin,
     p.motivo,
     p.observaciones,
     p.comprobante_url,
@@ -82,7 +84,7 @@ $result = $stmt->get_result();
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         body { background: #f4f8fd; font-family: 'Poppins', sans-serif; }
-        .container { padding-top: 40px; }
+        .container { padding-top: 40px; margin-left: 280px; }
         .titulo-permisos {
             font-weight: 900;
             color: #176cb1;
@@ -122,8 +124,8 @@ $result = $stmt->get_result();
                     <tr>
                         <th>Colaborador</th>
                         <th>Tipo</th>
-                        <th>Fecha Inicio</th>
-                        <th>Fecha Fin</th>
+                        <th>Fecha</th>
+                        <th>Horario</th>
                         <th>Motivo</th>
                         <th>Comprobante</th>
                         <th>Acciones</th>
@@ -135,8 +137,19 @@ $result = $stmt->get_result();
                         <tr>
                             <td><i class="bi bi-person-badge"></i> <?= htmlspecialchars($row['colaborador'] . ' ' . $row['Apellido1']) ?></td>
                             <td><span class="badge badge-tipo"><?= htmlspecialchars($row['tipo_permiso']) ?></span></td>
-                            <td><?= htmlspecialchars(date('d/m/Y', strtotime($row['fecha_inicio']))) ?></td>
-                            <td><?= htmlspecialchars(date('d/m/Y', strtotime($row['fecha_fin']))) ?></td>
+                            <td>
+                                <?= htmlspecialchars(date('d/m/Y', strtotime($row['fecha_inicio']))) ?>
+                                <?php if ($row['fecha_fin'] != $row['fecha_inicio']): ?>
+                                    al <?= htmlspecialchars(date('d/m/Y', strtotime($row['fecha_fin']))) ?>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($row['hora_inicio']): ?>
+                                    <span class="badge bg-info"><?= date('g:i A', strtotime($row['hora_inicio'])) ?> - <?= date('g:i A', strtotime($row['hora_fin'])) ?></span>
+                                <?php else: ?>
+                                    <span class="badge bg-secondary">Día completo</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($row['motivo']) ?></td>
                             <td>
                                 <?php if (!empty($row['comprobante_url'])): ?>
@@ -147,14 +160,12 @@ $result = $stmt->get_result();
                             </td>
                             <td>
                                 <div class="acciones-btns">
-                                    <!-- Aprobar -->
                                     <form method="post" style="display:inline;">
                                         <input type="hidden" name="id_colaborador_fk" value="<?= $row['id_colaborador_fk'] ?>">
                                         <input type="hidden" name="fecha_inicio" value="<?= $row['fecha_inicio'] ?>">
                                         <input type="hidden" name="accion" value="Aprobar">
                                         <button type="submit" class="btn btn-aprobar btn-sm" title="Aprobar"><i class="bi bi-check-circle"></i></button>
                                     </form>
-                                    <!-- Rechazar -->
                                     <button class="btn btn-rechazar btn-sm" onclick="mostrarComentario('<?= $row['id_colaborador_fk'] ?>', '<?= $row['fecha_inicio'] ?>')"><i class="bi bi-x-circle"></i></button>
                                 </div>
                             </td>
@@ -169,7 +180,6 @@ $result = $stmt->get_result();
     </div>
 </div>
 
-<!-- Modal Rechazo -->
 <div class="modal fade" id="modalComentarioRechazo" tabindex="-1" aria-labelledby="modalComentarioRechazoLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -208,4 +218,3 @@ function mostrarComentario(idColaborador, fechaInicio) {
 </body>
 </html>
 <?php $stmt->close(); $conn->close(); ?>
-

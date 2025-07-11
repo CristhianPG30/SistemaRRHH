@@ -14,32 +14,37 @@ while($row = $res_tipos->fetch_assoc()) {
     $tipos[] = $row;
 }
 
-$estado_pendiente_id = 3;
+$res_estado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'pendiente' LIMIT 1");
+$estado_pendiente_id = $res_estado->fetch_assoc()['idEstado'] ?? 3;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fecha_inicio = $_POST['fecha_inicio'] ?? '';
-    $fecha_fin = $_POST['fecha_fin'] ?? '';
+    $es_por_horas = isset($_POST['por_horas']);
+    $fecha_fin = $es_por_horas ? $fecha_inicio : ($_POST['fecha_fin'] ?? '');
+    $hora_inicio = $es_por_horas ? ($_POST['hora_inicio'] ?? null) : null;
+    $hora_fin = $es_por_horas ? ($_POST['hora_fin'] ?? null) : null;
+    
     $motivo = trim($_POST['motivo'] ?? '');
     $id_tipo_permiso = intval($_POST['id_tipo_permiso'] ?? 0);
     $observaciones = trim($_POST['observaciones'] ?? '');
     $archivo_url = '';
     $fechaHoy = date('Y-m-d');
 
-    // --- INICIO DE LA CORRECCIÓN ---
-    // 1. VALIDACIONES PRIMERO
-    if (empty($fecha_inicio) || empty($fecha_fin) || empty($motivo) || empty($id_tipo_permiso)) {
+    // Validaciones
+    if (empty($fecha_inicio) || empty($fecha_fin) || empty($motivo) || empty($id_tipo_permiso) || ($es_por_horas && (empty($hora_inicio) || empty($hora_fin)))) {
         $mensaje = "Debes completar todos los campos obligatorios.";
         $tipoMensaje = 'danger';
-    } elseif ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
+    } elseif ($fecha_inicio < $fechaHoy) {
         $mensaje = "No puedes solicitar permisos para fechas pasadas.";
         $tipoMensaje = 'danger';
     } elseif ($fecha_fin < $fecha_inicio) {
         $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
         $tipoMensaje = 'danger';
+    } elseif ($es_por_horas && $hora_inicio && $hora_fin && $hora_fin <= $hora_inicio) {
+        $mensaje = "La hora de fin debe ser posterior a la hora de inicio.";
+        $tipoMensaje = 'danger';
     } else {
-        // 2. Si las validaciones pasan, proceder con la lógica de inserción
-        // Verificar si ya existe un permiso para esa fecha
-        $check_sql = "SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND fecha_inicio = ?";
+        $check_sql = "SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND fecha_inicio = ? AND id_estado_fk != 5";
         $check_stmt = $conn->prepare($check_sql);
         $check_stmt->bind_param("is", $colaborador_id, $fecha_inicio);
         $check_stmt->execute();
@@ -49,7 +54,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $mensaje = "Ya tienes un permiso registrado para esa fecha de inicio.";
             $tipoMensaje = 'danger';
         } else {
-            // Manejo de archivo adjunto
             if (isset($_FILES['comprobante']) && $_FILES['comprobante']['error'] == UPLOAD_ERR_OK) {
                 $carpeta_destino = "uploads/permisos/";
                 if (!is_dir($carpeta_destino)) mkdir($carpeta_destino, 0777, true);
@@ -61,11 +65,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             }
             
-            // Inserción
-            $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url)
-                    VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?)";
+            // --- INICIO DE LA CORRECCIÓN ---
+            // Se debe modificar la tabla permisos para añadir las columnas hora_inicio y hora_fin
+            $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url, hora_inicio, hora_fin)
+                    VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)";
             $stmt = $conn->prepare($sql);
-            $stmt->bind_param("iiisssss", $colaborador_id, $id_tipo_permiso, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $motivo, $observaciones, $archivo_url);
+            // La cadena de tipos ahora tiene 10 caracteres para coincidir con los 10 placeholders y variables
+            $stmt->bind_param("iiisssssss", $colaborador_id, $id_tipo_permiso, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $motivo, $observaciones, $archivo_url, $hora_inicio, $hora_fin);
+            // --- FIN DE LA CORRECCIÓN ---
             
             if ($stmt->execute()) {
                 $mensaje = "¡Permiso solicitado correctamente!";
@@ -78,12 +85,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         $check_stmt->close();
     }
-    // --- FIN DE LA CORRECCIÓN ---
 }
 
-// Historial de permisos
+// Historial de permisos (sin cambios)
 $historial = [];
-$sql_historial = "SELECT p.fecha_inicio, p.fecha_fin, p.motivo, p.observaciones, p.comprobante_url, tpc.Descripcion AS tipo_permiso, ec.Descripcion AS estado
+$sql_historial = "SELECT p.fecha_inicio, p.fecha_fin, p.hora_inicio, p.hora_fin, p.motivo, p.observaciones, p.comprobante_url, tpc.Descripcion AS tipo_permiso, ec.Descripcion AS estado
                   FROM permisos p
                   JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
                   JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
@@ -153,13 +159,29 @@ $stmt_historial->close();
                     <label class="form-label">Fecha de Inicio*</label>
                     <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
                 </div>
-                <div class="col-md-6">
+                <div class="col-md-6" id="fechaFinContainer">
                     <label class="form-label">Fecha de Fin*</label>
                     <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
                 </div>
                 <div class="col-md-12">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="por_horas" id="porHorasCheck">
+                        <label class="form-check-label" for="porHorasCheck">
+                            Permiso por horas (en un solo día)
+                        </label>
+                    </div>
+                </div>
+                <div class="col-md-6" id="horaInicioContainer" style="display: none;">
+                    <label class="form-label">Hora de Inicio*</label>
+                    <input type="time" name="hora_inicio" id="hora_inicio" class="form-control">
+                </div>
+                <div class="col-md-6" id="horaFinContainer" style="display: none;">
+                    <label class="form-label">Hora de Fin*</label>
+                    <input type="time" name="hora_fin" id="hora_fin" class="form-control">
+                </div>
+                <div class="col-md-12">
                     <label class="form-label">Motivo*</label>
-                    <input type="text" name="motivo" class="form-control" placeholder="Ej: Cita médica" required>
+                    <input type="text" name="motivo" class="form-control" placeholder="Ej: Cita médica, Asunto personal" required>
                 </div>
                 <div class="col-md-12">
                     <label class="form-label">Observaciones (Opcional)</label>
@@ -185,8 +207,8 @@ $stmt_historial->close();
                 <thead>
                     <tr>
                         <th>Tipo</th>
-                        <th>Inicio</th>
-                        <th>Fin</th>
+                        <th>Fecha</th>
+                        <th>Horario</th>
                         <th>Motivo</th>
                         <th>Estado</th>
                         <th>Comprobante</th>
@@ -198,8 +220,17 @@ $stmt_historial->close();
                     <?php else: foreach ($historial as $row): ?>
                         <tr>
                             <td><?= htmlspecialchars($row['tipo_permiso']) ?></td>
-                            <td><?= date('d/m/Y', strtotime($row['fecha_inicio'])) ?></td>
-                            <td><?= date('d/m/Y', strtotime($row['fecha_fin'])) ?></td>
+                            <td>
+                                <?= date('d/m/Y', strtotime($row['fecha_inicio'])) ?>
+                                <?= ($row['fecha_fin'] && $row['fecha_fin'] != $row['fecha_inicio']) ? ' al '.date('d/m/Y', strtotime($row['fecha_fin'])) : '' ?>
+                            </td>
+                            <td>
+                                <?php if ($row['hora_inicio']): ?>
+                                    <span class="badge bg-info"><?= date('g:i A', strtotime($row['hora_inicio'])) ?> - <?= date('g:i A', strtotime($row['hora_fin'])) ?></span>
+                                <?php else: ?>
+                                    <span class="badge bg-secondary">Día completo</span>
+                                <?php endif; ?>
+                            </td>
                             <td><?= htmlspecialchars($row['motivo']) ?></td>
                             <td>
                                 <?php
@@ -228,11 +259,39 @@ $stmt_historial->close();
 <script>
     const fechaInicio = document.getElementById('fecha_inicio');
     const fechaFin = document.getElementById('fecha_fin');
+    const porHorasCheck = document.getElementById('porHorasCheck');
+    const fechaFinContainer = document.getElementById('fechaFinContainer');
+    const horaInicioContainer = document.getElementById('horaInicioContainer');
+    const horaFinContainer = document.getElementById('horaFinContainer');
+    const horaInicioInput = document.getElementById('hora_inicio');
+    const horaFinInput = document.getElementById('hora_fin');
+
     fechaInicio.addEventListener('change', function() {
-        if (fechaFin.value < fechaInicio.value) {
+        if (!porHorasCheck.checked && fechaFin.value < fechaInicio.value) {
             fechaFin.value = fechaInicio.value;
         }
         fechaFin.min = fechaInicio.value;
+    });
+
+    porHorasCheck.addEventListener('change', function() {
+        const esPorHoras = this.checked;
+        fechaFinContainer.style.display = esPorHoras ? 'none' : 'block';
+        horaInicioContainer.style.display = esPorHoras ? 'block' : 'none';
+        horaFinContainer.style.display = esPorHoras ? 'block' : 'none';
+        
+        fechaFin.required = !esPorHoras;
+        horaInicioInput.required = esPorHoras;
+        horaFinInput.required = esPorHoras;
+
+        if (esPorHoras) {
+            fechaFin.value = fechaInicio.value;
+        }
+    });
+
+    fechaInicio.addEventListener('input', function() {
+        if (porHorasCheck.checked) {
+            fechaFin.value = this.value;
+        }
     });
 
     (() => {

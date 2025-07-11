@@ -3,68 +3,96 @@ include 'header.php';
 include 'db.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
+// Establecer la zona horaria para asegurar que la fecha del servidor sea la correcta
+date_default_timezone_set('America/Costa_Rica');
+
 $colaborador_id = $_SESSION['colaborador_id'] ?? null;
 $mensaje = '';
 $tipoMensaje = '';
+
+// Definir fecha límite para los calendarios
+$fechaHoy = date('Y-m-d');
 
 // Procesar solicitud de incapacidad
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['fecha_inicio'])) {
     $fecha_inicio = $_POST['fecha_inicio'];
     $fecha_fin = $_POST['fecha_fin'];
     $comentario = trim($_POST['comentario'] ?? '');
-    $file_url = '';
-
+    
+    // --- VALIDACIONES DEL LADO DEL SERVIDOR EN ORDEN CORRECTO---
     if (!isset($_FILES['comprobante']) || $_FILES['comprobante']['error'] !== UPLOAD_ERR_OK) {
         $mensaje = "Debes adjuntar un comprobante válido.";
+        $tipoMensaje = 'danger';
+    } elseif ($fecha_inicio > $fechaHoy) {
+        $mensaje = "No puedes registrar una incapacidad para una fecha futura.";
         $tipoMensaje = 'danger';
     } elseif ($fecha_fin < $fecha_inicio) {
         $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
         $tipoMensaje = 'danger';
     } else {
-        // Subir archivo
-        $carpeta_destino = "uploads/incapacidades/";
-        if (!is_dir($carpeta_destino)) {
-            mkdir($carpeta_destino, 0777, true);
-        }
-        $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
-        $file_url = $carpeta_destino . uniqid('incap_') . "." . $ext;
-        
-        if (move_uploaded_file($_FILES['comprobante']['tmp_name'], $file_url)) {
-            // IDs de tipo y estado
-            $stmt_tipo = $conn->query("SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad' LIMIT 1");
-            $tipo_incapacidad_id = $stmt_tipo->fetch_assoc()['idTipoPermiso'];
+        // Se verifica si el rango de fechas solicitado se cruza con un permiso existente.
+        $check_sql = "SELECT id_colaborador_fk FROM permisos 
+                      WHERE id_colaborador_fk = ? 
+                      AND id_estado_fk != 5 -- Excluir rechazados
+                      AND (
+                          (? BETWEEN fecha_inicio AND fecha_fin) OR 
+                          (? BETWEEN fecha_inicio AND fecha_fin) OR
+                          (fecha_inicio BETWEEN ? AND ?)
+                      )";
+        $check_stmt = $conn->prepare($check_sql);
+        $check_stmt->bind_param("issss", $colaborador_id, $fecha_inicio, $fecha_fin, $fecha_inicio, $fecha_fin);
+        $check_stmt->execute();
+        $check_stmt->store_result();
 
-            $stmt_estado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'pendiente' LIMIT 1");
-            $estado_pendiente_id = $stmt_estado->fetch_assoc()['idEstado'];
+        if ($check_stmt->num_rows > 0) {
+            $mensaje = "El rango de fechas seleccionado se cruza con un permiso ya existente.";
+            $tipoMensaje = 'danger';
+        } else {
+            // Si todo es correcto, proceder a guardar
+            $carpeta_destino = "uploads/incapacidades/";
+            if (!is_dir($carpeta_destino)) {
+                mkdir($carpeta_destino, 0777, true);
+            }
+            $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
+            $file_url = $carpeta_destino . uniqid('incap_') . "." . $ext;
+            
+            if (move_uploaded_file($_FILES['comprobante']['tmp_name'], $file_url)) {
+                $stmt_tipo = $conn->query("SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad' LIMIT 1");
+                $tipo_incapacidad_id = $stmt_tipo->fetch_assoc()['idTipoPermiso'];
 
-            // Insertar en la base de datos
-            $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url) 
-                    VALUES (?, ?, ?, NOW(), ?, ?, 'Incapacidad Médica', ?, ?)";
-            $stmt_insert = $conn->prepare($sql);
-            $stmt_insert->bind_param("iiissss", $colaborador_id, $tipo_incapacidad_id, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $comentario, $file_url);
+                $stmt_estado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'pendiente' LIMIT 1");
+                $estado_pendiente_id = $stmt_estado->fetch_assoc()['idEstado'];
 
-            if ($stmt_insert->execute()) {
-                $mensaje = "¡Solicitud de incapacidad enviada correctamente!";
-                $tipoMensaje = 'success';
+                $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url) 
+                        VALUES (?, ?, ?, NOW(), ?, ?, 'Incapacidad Médica', ?, ?)";
+                $stmt_insert = $conn->prepare($sql);
+                $stmt_insert->bind_param("iiissss", $colaborador_id, $tipo_incapacidad_id, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $comentario, $file_url);
+
+                if ($stmt_insert->execute()) {
+                    $mensaje = "¡Solicitud de incapacidad enviada correctamente!";
+                    $tipoMensaje = 'success';
+                } else {
+                    $mensaje = "Error al enviar la solicitud: " . $conn->error;
+                    $tipoMensaje = 'danger';
+                }
+                $stmt_insert->close();
             } else {
-                $mensaje = "Error al enviar la solicitud.";
+                $mensaje = "Error al subir el archivo comprobante.";
                 $tipoMensaje = 'danger';
             }
-            $stmt_insert->close();
-        } else {
-            $mensaje = "Error al subir el archivo comprobante.";
-            $tipoMensaje = 'danger';
         }
+        $check_stmt->close();
     }
 }
 
-// --- Historial de incapacidades (CORREGIDO) ---
+
+// --- Historial de incapacidades ---
 $historial = [];
 $sql_historial = "SELECT 
                     p.fecha_inicio, 
                     p.fecha_fin, 
                     DATEDIFF(p.fecha_fin, p.fecha_inicio) + 1 as cantidad, 
-                    p.observaciones as comentario, -- Alias para consistencia
+                    p.observaciones as comentario, 
                     p.comprobante_url, 
                     ec.Descripcion as estado
                   FROM permisos p
@@ -115,8 +143,21 @@ $stmt_historial->close();
 <div class="main-container">
     <div class="main-card">
         <div class="card-title-custom">
-            <i class="bi bi-bandaid-fill"></i> Registrar Incapacidad
-        </div>
+            <i class="bi bi-bandaid-fill"></i> 
+            <span>Registrar Incapacidad</span>
+            <i class="bi bi-info-circle-fill text-info" 
+               style="font-size: 1.2rem; cursor: pointer;"
+               data-bs-toggle="tooltip" 
+               data-bs-html="true"
+               title="<div class='text-start'>
+                        <strong>Instrucciones:</strong><br>
+                        - Las fechas no pueden ser futuras.<br>
+                        - La fecha de fin no puede ser anterior a la de inicio.<br>
+                        - El comprobante es obligatorio.<br>
+                        - No puedes registrar una incapacidad si las fechas se cruzan con un permiso ya existente.
+                      </div>">
+            </i>
+            </div>
         <p class="text-center mb-4">Adjunta el comprobante y registra tus fechas de incapacidad.</p>
         
         <?php if ($mensaje): ?>
@@ -127,11 +168,11 @@ $stmt_historial->close();
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label">Fecha de Inicio</label>
-                    <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" required>
+                    <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" max="<?= $fechaHoy ?>" required>
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">Fecha de Fin</label>
-                    <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" required>
+                    <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" max="<?= $fechaHoy ?>" required>
                 </div>
                 <div class="col-md-12">
                     <label class="form-label">Comentario (Opcional)</label>
@@ -199,6 +240,10 @@ $stmt_historial->close();
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    // Inicializar los tooltips de Bootstrap
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+
     const fechaInicio = document.getElementById('fecha_inicio');
     const fechaFin = document.getElementById('fecha_fin');
     fechaInicio.addEventListener('change', function() {

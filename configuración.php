@@ -11,6 +11,7 @@ if (!isset($_SESSION['username']) || $_SESSION['rol'] != 1) {
 $message = '';
 $message_type = 'success';
 $configFilePath = 'js/configuracion.json';
+$feriadosFilePath = 'js/feriados.json';
 
 // --- LÓGICA DE GESTIÓN (POST REQUESTS) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -26,6 +27,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $message = 'Error al guardar la configuración.';
             $message_type = 'danger';
         }
+    }
+    
+    // --- LÓGICA PARA GESTIONAR FERIADOS ---
+    $feriados = file_exists($feriadosFilePath) ? json_decode(file_get_contents($feriadosFilePath), true) : [];
+
+    // Añadir feriado
+    if (isset($_POST['add_feriado'])) {
+        $nueva_fecha = $_POST['fecha_feriado'];
+        $nueva_desc = trim($_POST['descripcion_feriado']);
+        if (!empty($nueva_fecha) && !empty($nueva_desc)) {
+            $fecha_existente = false;
+            foreach ($feriados as $feriado) {
+                if ($feriado['fecha'] === $nueva_fecha) {
+                    $fecha_existente = true;
+                    break;
+                }
+            }
+            if (!$fecha_existente) {
+                $feriados[] = ['fecha' => $nueva_fecha, 'descripcion' => $nueva_desc];
+                usort($feriados, function($a, $b) {
+                    return strtotime($a['fecha']) - strtotime($b['fecha']);
+                });
+                file_put_contents($feriadosFilePath, json_encode($feriados, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                $message = 'Feriado agregado con éxito.';
+            } else {
+                $message = 'Error: La fecha de este feriado ya existe.';
+                $message_type = 'danger';
+            }
+        } else {
+            $message = 'Ambos campos (fecha y descripción) son obligatorios para agregar un feriado.';
+            $message_type = 'danger';
+        }
+    }
+
+    // Eliminar feriado
+    if (isset($_POST['delete_feriado'])) {
+        $fecha_a_eliminar = $_POST['fecha_a_eliminar'];
+        $feriados = array_filter($feriados, function($feriado) use ($fecha_a_eliminar) {
+            return $feriado['fecha'] !== $fecha_a_eliminar;
+        });
+        file_put_contents($feriadosFilePath, json_encode(array_values($feriados), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $message = 'Feriado eliminado con éxito.';
     }
     
     // Manejo de Deducciones
@@ -117,6 +160,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $configData = json_decode(file_get_contents($configFilePath), true);
 $deducciones_raw = $conn->query("SELECT * FROM tipo_deduccion_cat ORDER BY Descripcion");
 $roles = $conn->query("SELECT idIdRol, descripcion FROM idrol ORDER BY descripcion ASC")->fetch_all(MYSQLI_ASSOC);
+$feriados_actuales = file_exists($feriadosFilePath) ? json_decode(file_get_contents($feriadosFilePath), true) : [];
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -182,7 +226,7 @@ $roles = $conn->query("SELECT idIdRol, descripcion FROM idrol ORDER BY descripci
             </div>
 
             <div class="col-lg-6">
-                <div class="card">
+                <div class="card mb-4">
                     <div class="card-header"><h5 class="mb-0"><i class="bi bi-journal-minus me-2"></i>Deducciones de Ley</h5><button class="btn btn-sm btn-outline-primary" onclick="openDeductionModal()"><i class="bi bi-plus"></i> Nueva Deducción</button></div>
                     <div class="card-body p-2">
                         <ul class="list-group list-group-flush">
@@ -200,6 +244,30 @@ $roles = $conn->query("SELECT idIdRol, descripcion FROM idrol ORDER BY descripci
                                 </div>
                             </li>
                             <?php endwhile; ?>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header"><h5 class="mb-0"><i class="bi bi-calendar-event-fill me-2"></i>Gestión de Feriados</h5></div>
+                    <div class="card-body p-4">
+                        <form method="POST" class="row g-2 mb-4 align-items-end">
+                            <div class="col-sm-5"><label class="form-label fw-bold">Fecha</label><input type="date" class="form-control" name="fecha_feriado" required></div>
+                            <div class="col-sm-5"><label class="form-label fw-bold">Descripción</label><input type="text" class="form-control" name="descripcion_feriado" required></div>
+                            <div class="col-sm-2"><button type="submit" name="add_feriado" class="btn btn-primary w-100"><i class="bi bi-plus"></i></button></div>
+                        </form>
+                        <ul class="list-group list-group-flush">
+                            <?php if (empty($feriados_actuales)): ?>
+                                <li class="list-group-item text-muted text-center">No hay feriados configurados.</li>
+                            <?php else: foreach ($feriados_actuales as $feriado): ?>
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <div><?= htmlspecialchars(date('d/m/Y', strtotime($feriado['fecha']))) ?> - <strong><?= htmlspecialchars($feriado['descripcion']) ?></strong></div>
+                                <form method="POST" class="d-inline" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este feriado?');">
+                                    <input type="hidden" name="fecha_a_eliminar" value="<?= $feriado['fecha'] ?>">
+                                    <button type="submit" name="delete_feriado" class="btn btn-sm btn-light" title="Eliminar"><i class="bi bi-trash text-danger"></i></button>
+                                </form>
+                            </li>
+                            <?php endforeach; endif; ?>
                         </ul>
                     </div>
                 </div>

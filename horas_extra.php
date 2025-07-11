@@ -15,7 +15,26 @@ $tipoMensaje = '';
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['justificar_id'])) {
     $id = intval($_POST['justificar_id']);
     $motivo = trim($_POST['motivo']);
-    if (!empty($motivo)) {
+
+    // --- INICIO DE LA VALIDACIÓN ---
+    // Obtener la fecha de la hora extra que se está intentando justificar
+    $stmt_fecha = $conn->prepare("SELECT Fecha FROM horas_extra WHERE idPermisos = ? AND Persona_idPersona = ?");
+    $stmt_fecha->bind_param("ii", $id, $persona_id);
+    $stmt_fecha->execute();
+    $stmt_fecha->bind_result($fecha_hora_extra);
+    $stmt_fecha->fetch();
+    $stmt_fecha->close();
+
+    $fecha_limite = date('Y-m-d', strtotime('-30 days'));
+
+    if (empty($motivo)) {
+        $mensaje = "Por favor, escribe el motivo de la justificación.";
+        $tipoMensaje = 'warning';
+    } elseif ($fecha_hora_extra < $fecha_limite) { // Comprobar si la fecha es muy antigua
+        $mensaje = "No se pueden justificar horas extra con más de 30 días de antigüedad.";
+        $tipoMensaje = 'danger';
+    } else {
+        // Si las validaciones pasan, proceder a justificar
         $stmtCheck = $conn->prepare("SELECT estado FROM horas_extra WHERE Persona_idPersona = ? AND idPermisos = ?");
         $stmtCheck->bind_param("ii", $persona_id, $id);
         $stmtCheck->execute();
@@ -36,9 +55,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['justificar_id'])) {
             $mensaje = "No se puede modificar una solicitud que ya ha sido revisada.";
             $tipoMensaje = 'danger';
         }
-    } else {
-        $mensaje = "Por favor, escribe el motivo de la justificación.";
-        $tipoMensaje = 'warning';
     }
 }
 
@@ -93,6 +109,11 @@ $conn->close();
             align-items: center;
             gap: .8rem;
         }
+        .card-title-custom .info-icon {
+            font-size: 1.2rem;
+            color: #3498db;
+            cursor: pointer;
+        }
         .card-title-custom i { color: #3499ea; font-size: 2.2rem; }
         .text-center { color: #3a6389; }
         .table-custom {
@@ -127,9 +148,20 @@ $conn->close();
 <div class="main-container">
     <div class="main-card">
         <div class="card-title-custom">
-            <i class="bi bi-clock-history"></i> Mis Horas Extra
+            <i class="bi bi-clock-history"></i>
+            <span>Mis Horas Extra</span>
+            <i class="bi bi-info-circle-fill info-icon" 
+               data-bs-toggle="tooltip" 
+               data-bs-html="true" 
+               title="<div class='text-start'>
+                        <strong>¿Cómo justificar?</strong><br>
+                        1. Las horas extra se generan automáticamente cuando tu marcaje de salida excede las 8 horas laborales.<br>
+                        2. Haz clic en 'Justificar' para añadir el motivo por el cual realizaste estas horas.<br>
+                        3. Tu justificación será enviada a tu jefatura para su aprobación final.
+                      </div>">
+            </i>
         </div>
-        <p class="text-center mb-4">Justifica tus horas extra pendientes de revisión.</p>
+        <p class="text-center mb-4">Justifica tus horas extra pendientes para que sean aprobadas.</p>
 
         <?php if ($mensaje): ?>
             <div class="alert alert-<?= $tipoMensaje ?> text-center"><?= htmlspecialchars($mensaje); ?></div>
@@ -152,7 +184,13 @@ $conn->close();
                 <tbody>
                     <?php if (empty($horasExtra)): ?>
                         <tr><td colspan="8">No tienes horas extra registradas.</td></tr>
-                    <?php else: foreach ($horasExtra as $hx): ?>
+                    <?php else: foreach ($horasExtra as $hx): 
+                        $estado_lower = strtolower($hx['estado']);
+                        $fecha_registro = new DateTime($hx['Fecha']);
+                        $hoy = new DateTime();
+                        $diferencia_dias = $hoy->diff($fecha_registro)->days;
+                        $es_editable = ($estado_lower == 'pendiente' || $estado_lower == 'justificada') && $diferencia_dias <= 30;
+                    ?>
                         <tr>
                             <td><?= date('d/m/Y', strtotime($hx['Fecha'])) ?></td>
                             <td><?= htmlspecialchars($hx['hora_inicio']) ?></td>
@@ -161,7 +199,6 @@ $conn->close();
                             <td><?= htmlspecialchars($hx['Motivo'] ?: 'N/A') ?></td>
                             <td>
                                 <?php
-                                $estado_lower = strtolower($hx['estado']);
                                 if ($estado_lower == 'pendiente') echo '<span class="badge bg-warning">Pendiente</span>';
                                 else if ($estado_lower == 'justificada') echo '<span class="badge bg-primary">Justificada</span>';
                                 else if ($estado_lower == 'aprobada') echo '<span class="badge bg-success">Aprobada</span>';
@@ -171,12 +208,12 @@ $conn->close();
                             </td>
                             <td><?= htmlspecialchars($hx['Observaciones'] ?: '-') ?></td>
                             <td>
-                                <?php if ($estado_lower == 'pendiente' || $estado_lower == 'justificada'): ?>
+                                <?php if ($es_editable): ?>
                                     <button class="btn btn-sm btn-primary" onclick="mostrarJustificar('<?= $hx['idPermisos'] ?>', '<?= htmlspecialchars($hx['Motivo'], ENT_QUOTES) ?>')">
                                         <i class="bi bi-pencil-square"></i> <?= $estado_lower == 'pendiente' ? 'Justificar' : 'Editar' ?>
                                     </button>
                                 <?php else: ?>
-                                    <button class="btn btn-sm btn-secondary" disabled>Revisado</button>
+                                    <button class="btn btn-sm btn-secondary" disabled title="No se puede modificar una solicitud ya revisada o con más de 30 días.">Revisado</button>
                                 <?php endif; ?>
                             </td>
                         </tr>
@@ -213,6 +250,10 @@ $conn->close();
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    // Inicializar los tooltips de Bootstrap
+    const tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+    const tooltipList = [...tooltipTriggerList].map(tooltipTriggerEl => new bootstrap.Tooltip(tooltipTriggerEl));
+
     const modalJustificar = new bootstrap.Modal(document.getElementById('modalJustificar'));
     function mostrarJustificar(id, motivo) {
         document.getElementById('justificar_id').value = id;

@@ -1,0 +1,30 @@
+[
+    {
+        "fecha": "2025-01-01",
+        "descripcion": "Año Nuevo"
+    },
+    {
+        "fecha": "2025-04-11",
+        "descripcion": "Día de Juan Santamaría"
+    },
+    {
+        "fecha": "2025-05-01",
+        "descripcion": "Día del Trabajador"
+    },
+    {
+        "fecha": "2025-07-25",
+        "descripcion": "Anexión del Partido de Nicoya"
+    },
+    {
+        "fecha": "2025-08-15",
+        "descripcion": "Día de la Madre"
+    },
+    {
+        "fecha": "2025-09-15",
+        "descripcion": "Día de la Independencia"
+    },
+    {
+        "fecha": "2025-12-25",
+        "descripcion": "Navidad"
+    }
+]
