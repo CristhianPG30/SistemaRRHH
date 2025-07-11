@@ -4,231 +4,193 @@ include 'db.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $colaborador_id = $_SESSION['colaborador_id'] ?? null;
-$persona_id = $_SESSION['persona_id'] ?? null;
 $mensaje = '';
 $tipoMensaje = '';
 
 // Procesar solicitud de incapacidad
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $fecha_inicio = $_POST['fecha_inicio'] ?? '';
-    $fecha_fin = $_POST['fecha_fin'] ?? '';
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['fecha_inicio'])) {
+    $fecha_inicio = $_POST['fecha_inicio'];
+    $fecha_fin = $_POST['fecha_fin'];
     $comentario = trim($_POST['comentario'] ?? '');
-    $fechaHoy = date('Y-m-d');
     $file_url = '';
 
-    // COMPROBANTE OBLIGATORIO
-    if (
-        !isset($_FILES['comprobante']) ||
-        $_FILES['comprobante']['error'] != UPLOAD_ERR_OK ||
-        empty($_FILES['comprobante']['name'])
-    ) {
-        $mensaje = "Debes adjuntar un comprobante obligatorio (PDF, imagen o documento).";
+    if (!isset($_FILES['comprobante']) || $_FILES['comprobante']['error'] !== UPLOAD_ERR_OK) {
+        $mensaje = "Debes adjuntar un comprobante válido.";
+        $tipoMensaje = 'danger';
+    } elseif ($fecha_fin < $fecha_inicio) {
+        $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
         $tipoMensaje = 'danger';
     } else {
-        // Subida de archivo
-        $carpeta_destino = "uploads/comprobantes/";
+        // Subir archivo
+        $carpeta_destino = "uploads/incapacidades/";
         if (!is_dir($carpeta_destino)) {
             mkdir($carpeta_destino, 0777, true);
         }
         $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
-        $file_url = $carpeta_destino . uniqid('incapacidad_') . "." . $ext;
-        move_uploaded_file($_FILES['comprobante']['tmp_name'], $file_url);
+        $file_url = $carpeta_destino . uniqid('incap_') . "." . $ext;
+        
+        if (move_uploaded_file($_FILES['comprobante']['tmp_name'], $file_url)) {
+            // IDs de tipo y estado
+            $stmt_tipo = $conn->query("SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad' LIMIT 1");
+            $tipo_incapacidad_id = $stmt_tipo->fetch_assoc()['idTipoPermiso'];
 
-        // Obtener el id_tipo_permiso_fk correspondiente a "Incapacidad"
-        $stmt = $conn->prepare("SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad' LIMIT 1");
-        $stmt->execute();
-        $stmt->bind_result($tipo_incapacidad_id);
-        $stmt->fetch();
-        $stmt->close();
+            $stmt_estado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'pendiente' LIMIT 1");
+            $estado_pendiente_id = $stmt_estado->fetch_assoc()['idEstado'];
 
-        // Obtener el id_estado_fk (pendiente)
-        $stmt = $conn->prepare("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'pendiente' LIMIT 1");
-        $stmt->execute();
-        $stmt->bind_result($estado_pendiente_id);
-        $stmt->fetch();
-        $stmt->close();
+            // Insertar en la base de datos
+            $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url) 
+                    VALUES (?, ?, ?, NOW(), ?, ?, 'Incapacidad Médica', ?, ?)";
+            $stmt_insert = $conn->prepare($sql);
+            $stmt_insert->bind_param("iiissss", $colaborador_id, $tipo_incapacidad_id, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $comentario, $file_url);
 
-        // Validaciones
-        $dias_nuevos = 0;
-        if ($fecha_inicio && $fecha_fin) {
-            $dias_nuevos = (strtotime($fecha_fin) - strtotime($fecha_inicio)) / 86400 + 1;
-        }
-        if ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
-            $mensaje = "No puedes solicitar incapacidad en fechas anteriores a hoy.";
-            $tipoMensaje = 'danger';
-        } elseif ($fecha_fin < $fecha_inicio) {
-            $mensaje = "La fecha de fin no puede ser menor que la de inicio.";
-            $tipoMensaje = 'danger';
-        } elseif ($dias_nuevos <= 0) {
-            $mensaje = "La cantidad de días debe ser mayor a 0.";
-            $tipoMensaje = 'danger';
-        } else {
-            $stmt = $conn->prepare("INSERT INTO permisos (
-                id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url
-            ) VALUES (?, ?, ?, NOW(), ?, ?, 'Incapacidad', ?, ?)");
-            $stmt->bind_param(
-                "iiissss",
-                $colaborador_id,
-                $tipo_incapacidad_id,
-                $estado_pendiente_id,
-                $fecha_inicio,
-                $fecha_fin,
-                $comentario,
-                $file_url
-            );
-            if ($stmt->execute()) {
-                $mensaje = "✅ Solicitud de incapacidad enviada correctamente.";
+            if ($stmt_insert->execute()) {
+                $mensaje = "¡Solicitud de incapacidad enviada correctamente!";
                 $tipoMensaje = 'success';
             } else {
                 $mensaje = "Error al enviar la solicitud.";
                 $tipoMensaje = 'danger';
             }
-            $stmt->close();
+            $stmt_insert->close();
+        } else {
+            $mensaje = "Error al subir el archivo comprobante.";
+            $tipoMensaje = 'danger';
         }
     }
 }
 
-// Historial de incapacidades (de permisos)
+// --- Historial de incapacidades (CORREGIDO) ---
 $historial = [];
-$sql = "SELECT fecha_inicio, fecha_fin, DATEDIFF(fecha_fin, fecha_inicio) + 1 as cantidad, observaciones, comprobante_url, id_estado_fk
-        FROM permisos
-        WHERE id_colaborador_fk = ?
-          AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad')
-        ORDER BY fecha_inicio DESC";
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $colaborador_id);
-$stmt->execute();
-$stmt->bind_result($h_inicio, $h_fin, $h_cantidad, $h_obs, $h_comprobante, $h_estado);
-while ($stmt->fetch()) {
-    $historial[] = [
-        'inicio' => $h_inicio,
-        'fin' => $h_fin,
-        'cantidad' => intval($h_cantidad),
-        'obs' => $h_obs,
-        'comprobante' => $h_comprobante,
-        'estado' => $h_estado
-    ];
-}
-$stmt->close();
+$sql_historial = "SELECT 
+                    p.fecha_inicio, 
+                    p.fecha_fin, 
+                    DATEDIFF(p.fecha_fin, p.fecha_inicio) + 1 as cantidad, 
+                    p.observaciones as comentario, -- Alias para consistencia
+                    p.comprobante_url, 
+                    ec.Descripcion as estado
+                  FROM permisos p
+                  JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
+                  WHERE p.id_colaborador_fk = ?
+                  AND p.id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'incapacidad')
+                  ORDER BY p.fecha_inicio DESC";
 
-// Lista de estados para mostrar texto
-$estados = [];
-$resEstados = $conn->query("SELECT idEstado, Descripcion FROM estado_cat");
-while ($row = $resEstados->fetch_assoc()) {
-    $estados[$row['idEstado']] = $row['Descripcion'];
+$stmt_historial = $conn->prepare($sql_historial);
+$stmt_historial->bind_param("i", $colaborador_id);
+$stmt_historial->execute();
+$result = $stmt_historial->get_result();
+while ($row = $result->fetch_assoc()) {
+    $historial[] = $row;
 }
+$stmt_historial->close();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<style>
-    body { background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important; }
-    .center-container { min-height: 95vh; display: flex; align-items: center; justify-content: center; }
-    .form-card { background: #fff; border-radius: 2.3rem; box-shadow: 0 8px 48px 0 rgba(44,62,80,.14); padding: 3.7rem 2.6rem 2.5rem 2.6rem; max-width: 540px; width: 100%; animation: fadeInDown 0.9s;}
-    @keyframes fadeInDown { 0% { opacity: 0; transform: translateY(-25px);} 100% { opacity: 1; transform: translateY(0);} }
-    .form-title { font-weight: 900; font-size: 2.2rem; margin-bottom: 1.3rem; color: #232d3b; display: flex; align-items: center; justify-content: center; letter-spacing: .3px; gap: 0.8rem;}
-    .form-title i { color: #0abb87; font-size: 2.7rem;}
-    .input-group-text { background: #f6faff; border: none; color: #23b6ff; font-size: 1.3rem; border-radius: 1.1rem 0 0 1.1rem;}
-    .form-control { font-size: 1.17rem; padding: .97rem .9rem; border-radius: 0 1.1rem 1.1rem 0;}
-    .form-control:focus { border-color: #23b6ff; box-shadow: 0 0 0 2px #2494ff26;}
-    .btn-app { background: linear-gradient(90deg, #0abb87 75%, #00c6c6 100%); color: #fff; font-weight: 700; font-size: 1.17rem; padding: 1.07rem 0; border-radius: 1.3rem; box-shadow: 0 2px 12px #0abb8723; transition: background .17s, box-shadow .17s; width: 100%; margin-top: 10px; letter-spacing: .7px;}
-    .btn-app:hover { background: linear-gradient(90deg, #00c6c6 15%, #0abb87 100%); color: #fff; box-shadow: 0 8px 24px #0abb8722; }
-    .alert { font-size: 1.07rem; margin-bottom: 1.45rem; border-radius: 1.1rem;}
-    .historial-title { font-weight: 700; color: #1976d2; margin-top: 2.5rem; font-size: 1.2rem; margin-bottom: .9rem;}
-    .table-incapacidad { border-radius: 1.1rem; overflow: hidden; background: #f6f9fd;}
-    .table-incapacidad th { background: #f3faff; color: #0abb87;}
-    .table-incapacidad td, .table-incapacidad th { font-size: 1rem; padding: 0.75rem;}
-    @media (max-width:600px){ .form-card { max-width: 98vw; padding: 2.2rem 1.1rem 1.5rem 1.1rem; } .form-title { font-size: 1.3rem;} .table-incapacidad td, .table-incapacidad th { font-size: .9rem; padding: .45rem;}}
-</style>
 
-<div class="center-container">
-    <div>
-        <div class="form-card">
-            <div class="form-title animate__animated animate__fadeInDown">
-                <i class="bi bi-emoji-dizzy"></i> Solicitar Incapacidad
-            </div>
-            <div id="msg-php">
-                <?php if($mensaje): ?>
-                    <div class="alert alert-<?= $tipoMensaje ?> text-center animate__animated animate__fadeInDown" id="php-alert">
-                        <?= htmlspecialchars($mensaje) ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-            <form method="post" class="needs-validation" id="incapacidadForm" novalidate autocomplete="off" enctype="multipart/form-data">
-                <div class="row gx-2 gy-2">
-                    <div class="col-6 input-group mb-4">
-                        <span class="input-group-text"><i class="bi bi-calendar-event"></i></span>
-                        <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required data-bs-toggle="tooltip" title="Fecha de inicio">
-                        <div class="invalid-feedback">Fecha inicio requerida.</div>
-                    </div>
-                    <div class="col-6 input-group mb-4">
-                        <span class="input-group-text"><i class="bi bi-calendar-event-fill"></i></span>
-                        <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required data-bs-toggle="tooltip" title="Fecha de fin">
-                        <div class="invalid-feedback">Fecha fin requerida.</div>
-                    </div>
-                </div>
-                <div class="mb-4 input-group">
-                    <span class="input-group-text"><i class="bi bi-chat-left-text"></i></span>
-                    <input type="text" name="comentario" id="comentario" class="form-control" placeholder="Motivo o comentario" maxlength="120" data-bs-toggle="tooltip" title="Explica el motivo o comentario">
-                </div>
-                <div class="mb-4 input-group">
-                    <span class="input-group-text"><i class="bi bi-paperclip"></i></span>
-                    <input type="file" name="comprobante" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.doc,.docx" required data-bs-toggle="tooltip" title="Subir comprobante (PDF, imagen, doc)">
-                    <div class="invalid-feedback">El comprobante es obligatorio.</div>
-                </div>
-                <button type="submit" id="btnEnviar" class="btn btn-app mt-1">
-                    <span id="btnText"><i class="bi bi-send"></i> Enviar Solicitud</span>
-                    <span id="btnSpinner" class="spinner-border spinner-border-sm d-none"></span>
-                </button>
-            </form>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Registrar Incapacidad - Edginton S.A.</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body { background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important; font-family: 'Poppins', sans-serif; }
+        .main-container { max-width: 880px; margin: 48px auto 0; padding: 0 15px; }
+        .main-card { background: #fff; border-radius: 2.1rem; box-shadow: 0 8px 38px 0 rgba(44,62,80,.12); padding: 2.2rem 2.1rem 1.7rem 2.1rem; margin-bottom: 2.2rem; animation: fadeInDown 0.9s; }
+        .card-title-custom { font-size: 2.2rem; font-weight: 900; color: #1a3961; margin-bottom: 0.5rem; display: flex; align-items: center; gap: .8rem; }
+        .card-title-custom i { color: #01b87f; font-size: 2.2rem; }
+        .text-center { color: #3a6389; }
+        .form-label { color: #018f62; font-weight: 600; }
+        .form-control { border-radius: 0.9rem; }
+        .btn-submit-custom { background: linear-gradient(90deg, #01b87f 75%, #53e3fc 100%); color: #fff; font-weight: 700; border-radius: 0.8rem; padding: .63rem 1.5rem; width: 100%; margin-top: 1rem; border: none; }
+        .btn-submit-custom:hover { background: linear-gradient(90deg, #53e3fc 25%, #01b87f 100%); color: #fff; }
+        .table-custom { background: #f8fafd; border-radius: 1.15rem; overflow: hidden; box-shadow: 0 4px 24px #23b6ff10; }
+        .table-custom th { background: #e9f6ff; color: #288cc8; font-weight: 700; }
+        .table-custom td, .table-custom th { padding: 0.75rem 0.7rem; text-align: center; vertical-align: middle; }
+        .badge.bg-warning { background-color: #ffd237 !important; color: #6a4d00 !important; }
+        .badge.bg-success { background-color: #01b87f !important; }
+        .badge.bg-danger { background-color: #ff6565 !important; }
+        .section-title { font-weight: 700; color: #1a3961; font-size: 1.4rem; margin-bottom: 1rem; text-align: center; }
+        @media (max-width: 600px) { .main-card { padding: 1.1rem 0.3rem; } .card-title-custom { font-size: 1.3rem; } .table-custom th, .table-custom td { font-size: .85rem; padding: 0.4rem 0.3rem;} }
+    </style>
+</head>
+<body>
+
+<div class="main-container">
+    <div class="main-card">
+        <div class="card-title-custom">
+            <i class="bi bi-bandaid-fill"></i> Registrar Incapacidad
         </div>
+        <p class="text-center mb-4">Adjunta el comprobante y registra tus fechas de incapacidad.</p>
+        
+        <?php if ($mensaje): ?>
+            <div class="alert alert-<?= $tipoMensaje ?> text-center"><?= htmlspecialchars($mensaje) ?></div>
+        <?php endif; ?>
 
-        <!-- HISTORIAL SIEMPRE VISIBLE -->
-        <div class="historial-title mt-5 mb-2 animate__animated animate__fadeInDown">
-            <i class="bi bi-clock-history"></i> Historial de incapacidades
+        <form method="post" enctype="multipart/form-data" id="incapacidadForm" novalidate>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Fecha de Inicio</label>
+                    <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Fecha de Fin</label>
+                    <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" required>
+                </div>
+                <div class="col-md-12">
+                    <label class="form-label">Comentario (Opcional)</label>
+                    <input type="text" name="comentario" class="form-control" placeholder="Ej: Gripe, consulta médica...">
+                </div>
+                <div class="col-md-12">
+                    <label class="form-label">Comprobante (Obligatorio)</label>
+                    <input type="file" name="comprobante" class="form-control" accept=".pdf,.jpg,.jpeg,.png" required>
+                </div>
+            </div>
+            <button type="submit" class="btn btn-submit-custom">
+                <i class="bi bi-send-fill"></i> Enviar Solicitud
+            </button>
+        </form>
+    </div>
+
+    <div class="main-card mt-4">
+        <div class="section-title">
+            <i class="bi bi-clock-history"></i> Historial de Incapacidades
         </div>
         <div class="table-responsive">
-            <table class="table table-incapacidad table-bordered text-center">
+            <table class="table table-custom table-bordered align-middle">
                 <thead>
                     <tr>
                         <th>Inicio</th>
                         <th>Fin</th>
                         <th>Días</th>
                         <th>Comentario</th>
-                        <th>Comprobante</th>
                         <th>Estado</th>
+                        <th>Comprobante</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php if (count($historial)): ?>
-                        <?php foreach ($historial as $row): ?>
+                    <?php if (empty($historial)): ?>
+                        <tr><td colspan="6">No tienes incapacidades registradas.</td></tr>
+                    <?php else: foreach ($historial as $row): ?>
                         <tr>
-                            <td><?= $row['inicio'] ? date('d/m/Y', strtotime($row['inicio'])) : '-' ?></td>
-                            <td><?= $row['fin'] ? date('d/m/Y', strtotime($row['fin'])) : '-' ?></td>
+                            <td><?= date('d/m/Y', strtotime($row['fecha_inicio'])) ?></td>
+                            <td><?= date('d/m/Y', strtotime($row['fecha_fin'])) ?></td>
                             <td><?= htmlspecialchars($row['cantidad']) ?></td>
-                            <td><?= htmlspecialchars($row['obs']) ?></td>
-                            <td>
-                                <?php if ($row['comprobante']): ?>
-                                    <a href="<?= htmlspecialchars($row['comprobante']) ?>" target="_blank" class="btn btn-outline-info btn-sm">Ver</a>
-                                <?php else: ?>
-                                    <span class="text-muted">Sin archivo</span>
-                                <?php endif; ?>
-                            </td>
+                            <td><?= htmlspecialchars($row['comentario'] ?: '-') ?></td>
                             <td>
                                 <?php
-                                $estado = isset($estados[$row['estado']]) ? strtolower($estados[$row['estado']]) : 'pendiente';
-                                $color = ($estado == 'aprobado') ? 'success' : (($estado == 'rechazado') ? 'danger' : 'warning text-dark');
+                                $estado_lower = strtolower($row['estado']);
+                                if ($estado_lower == 'pendiente') echo '<span class="badge bg-warning">Pendiente</span>';
+                                else if ($estado_lower == 'aprobado') echo '<span class="badge bg-success">Aprobado</span>';
+                                else if ($estado_lower == 'rechazado') echo '<span class="badge bg-danger">Rechazado</span>';
+                                else echo '<span class="badge bg-info">'.htmlspecialchars($row['estado']).'</span>';
                                 ?>
-                                <span class="badge bg-<?= $color ?>">
-                                    <?= isset($estados[$row['estado']]) ? $estados[$row['estado']] : 'Pendiente' ?>
-                                </span>
+                            </td>
+                            <td>
+                                <?php if ($row['comprobante_url']): ?>
+                                    <a href="<?= htmlspecialchars($row['comprobante_url']) ?>" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i> Ver</a>
+                                <?php else: ?>
+                                    -
+                                <?php endif; ?>
                             </td>
                         </tr>
-                        <?php endforeach ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="6" class="text-muted">No hay solicitudes de incapacidad registradas.</td>
-                        </tr>
-                    <?php endif ?>
+                    <?php endforeach; endif; ?>
                 </tbody>
             </table>
         </div>
@@ -236,31 +198,28 @@ while ($row = $resEstados->fetch_assoc()) {
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.js"></script>
 <script>
-var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
-tooltipTriggerList.map(function (tooltipTriggerEl) { return new bootstrap.Tooltip(tooltipTriggerEl) });
-const fechaInicio = document.getElementById('fecha_inicio');
-const fechaFin = document.getElementById('fecha_fin');
-fechaInicio.addEventListener('change', function() {
-    fechaFin.min = fechaInicio.value;
-    if(fechaFin.value < fechaInicio.value) fechaFin.value = fechaInicio.value;
-});
-(() => {
-  'use strict';
-  const form = document.getElementById('incapacidadForm');
-  form.addEventListener('submit', function (event) {
-    if (!form.checkValidity() || (fechaFin.value && fechaInicio.value && fechaFin.value < fechaInicio.value)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (fechaFin.value && fechaInicio.value && fechaFin.value < fechaInicio.value) {
-          fechaFin.classList.add('is-invalid');
-      }
-    } else {
-      document.getElementById('btnText').classList.add('d-none');
-      document.getElementById('btnSpinner').classList.remove('d-none');
-    }
-    form.classList.add('was-validated');
-  }, false);
-})();
+    const fechaInicio = document.getElementById('fecha_inicio');
+    const fechaFin = document.getElementById('fecha_fin');
+    fechaInicio.addEventListener('change', function() {
+        if (fechaFin.value < fechaInicio.value) {
+            fechaFin.value = fechaInicio.value;
+        }
+        fechaFin.min = fechaInicio.value;
+    });
+
+    (() => {
+        'use strict';
+        const form = document.getElementById('incapacidadForm');
+        form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            form.classList.add('was-validated');
+        }, false);
+    })();
 </script>
+
+</body>
+</html>

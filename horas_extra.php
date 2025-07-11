@@ -5,15 +5,17 @@ if (!isset($_SESSION['username'])) {
     exit;
 }
 include 'db.php';
+include 'header.php'; // Incluir el header principal
 
 $persona_id = $_SESSION['persona_id'];
 $mensaje = '';
+$tipoMensaje = '';
 
 // PROCESAR JUSTIFICACIÓN
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['justificar_id'])) {
     $id = intval($_POST['justificar_id']);
     $motivo = trim($_POST['motivo']);
-    if ($motivo != "") {
+    if (!empty($motivo)) {
         $stmtCheck = $conn->prepare("SELECT estado FROM horas_extra WHERE Persona_idPersona = ? AND idPermisos = ?");
         $stmtCheck->bind_param("ii", $persona_id, $id);
         $stmtCheck->execute();
@@ -25,22 +27,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['justificar_id'])) {
             $estado_justificada = 'Justificada';
             $stmt = $conn->prepare("UPDATE horas_extra SET Motivo = ?, estado = ? WHERE Persona_idPersona = ? AND idPermisos = ?");
             $stmt->bind_param("ssii", $motivo, $estado_justificada, $persona_id, $id);
-            $stmt->execute();
+            if ($stmt->execute()) {
+                $mensaje = "¡Hora extra justificada correctamente!";
+                $tipoMensaje = 'success';
+            }
             $stmt->close();
-            $mensaje = "¡Hora extra justificada correctamente! Queda pendiente de revisión del jefe.";
         } else {
-            $mensaje = "No se puede justificar porque ya fue revisada.";
+            $mensaje = "No se puede modificar una solicitud que ya ha sido revisada.";
+            $tipoMensaje = 'danger';
         }
     } else {
         $mensaje = "Por favor, escribe el motivo de la justificación.";
+        $tipoMensaje = 'warning';
     }
 }
 
 // TRAER HORAS EXTRA
 $stmt = $conn->prepare("SELECT idPermisos, Fecha, hora_inicio, hora_fin, cantidad_horas, Motivo, estado, Observaciones
-                        FROM horas_extra
-                        WHERE Persona_idPersona = ?
-                        ORDER BY Fecha DESC, hora_inicio DESC");
+                       FROM horas_extra
+                       WHERE Persona_idPersona = ?
+                       ORDER BY Fecha DESC, hora_inicio DESC");
 $stmt->bind_param("i", $persona_id);
 $stmt->execute();
 $result = $stmt->get_result();
@@ -52,197 +58,168 @@ $stmt->close();
 $conn->close();
 ?>
 
-<?php include 'header.php'; ?>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Mis Horas Extra - Edginton S.A.</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
+    <style>
+        body {
+            background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important;
+            font-family: 'Poppins', sans-serif;
+        }
+        .main-container {
+            max-width: 1100px;
+            margin: 48px auto 0;
+            padding: 0 15px;
+        }
+        .main-card {
+            background: #fff;
+            border-radius: 2.1rem;
+            box-shadow: 0 8px 38px 0 rgba(44,62,80,.12);
+            padding: 2.2rem 2.1rem 1.7rem 2.1rem;
+            margin-bottom: 2.2rem;
+            animation: fadeInDown 0.9s;
+        }
+        .card-title-custom {
+            font-size: 2.2rem;
+            font-weight: 900;
+            color: #1a3961;
+            letter-spacing: .7px;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: .8rem;
+        }
+        .card-title-custom i { color: #3499ea; font-size: 2.2rem; }
+        .text-center { color: #3a6389; }
+        .table-custom {
+            background: #f8fafd;
+            border-radius: 1.15rem;
+            overflow: hidden;
+            box-shadow: 0 4px 24px #23b6ff10;
+        }
+        .table-custom th {
+            background: #e9f6ff;
+            color: #288cc8;
+            font-weight: 700;
+        }
+        .table-custom td, .table-custom th {
+            padding: 0.8rem 0.7rem;
+            text-align: center;
+            vertical-align: middle;
+        }
+        .badge.bg-warning { background-color: #ffd237 !important; color: #6a4d00 !important; }
+        .badge.bg-primary { background-color: #bee7fa !important; color: #157099 !important; }
+        .badge.bg-success { background-color: #01b87f !important; }
+        .badge.bg-danger { background-color: #ff6565 !important; }
+        @media (max-width: 992px) {
+            .main-card { padding: 1.1rem 0.5rem; }
+            .card-title-custom { font-size: 1.5rem; }
+            .table-custom th, .table-custom td { font-size: .9rem; padding: 0.5rem 0.3rem;}
+        }
+    </style>
+</head>
+<body>
 
-<style>
-.he-container {
-    max-width: 950px;
-    margin: 40px auto 0 auto;
-    padding: 32px 22px 26px 22px;
-    background: #fff;
-    border-radius: 18px;
-    box-shadow: 0 4px 26px #e1edf630;
-    border: 1px solid #e7edf5;
-}
-.he-title {
-    font-size: 2rem;
-    font-weight: 800;
-    color: #195ca8;
-    margin-bottom: 22px;
-    text-align: left;
-    letter-spacing: .2px;
-}
-.he-table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    background: #f9fcff;
-    border-radius: 10px;
-    overflow: hidden;
-    margin-bottom: 0;
-    box-shadow: 0 2px 10px #b9d9ec12;
-}
-.he-table th, .he-table td {
-    padding: 12px 10px;
-    border-bottom: 1px solid #e8eef6;
-    text-align: left;
-    font-size: 1.02rem;
-    vertical-align: middle;
-}
-.he-table th {
-    background: #f2f6fa;
-    color: #144b81;
-    font-weight: 700;
-    border-top: 1px solid #e3ecfa;
-}
-.he-table tr:last-child td {
-    border-bottom: none;
-}
-.he-status {
-    font-weight: 700;
-    border-radius: 16px;
-    padding: 3px 16px;
-    font-size: .98em;
-    display: inline-block;
-    background: #e5e9ef;
-    color: #13486b;
-    letter-spacing: .03em;
-}
-.he-status-pend { background: #f8e6a0; color: #857214; }
-.he-status-jus  { background: #bee7fa; color: #157099; }
-.he-status-apr  { background: #b2f0cd; color: #14763b; }
-.he-status-rech { background: #f3c7c7; color: #a33b3b; }
-.he-btn-just {
-    border-radius: 16px !important;
-    padding: 6px 22px !important;
-    font-weight: 700;
-    font-size: 1rem;
-    border: none;
-    color: #fff;
-    background: #1976d2;
-    transition: background .17s;
-}
-.he-btn-just:hover { background: #145ca3; }
-.he-btn-just[disabled] { opacity:.66; pointer-events:none; }
-@media (max-width: 1050px) {
-    .he-container {padding: 18px 2px 14px 2px;}
-    .he-title {font-size: 1.2rem;}
-    .he-table th, .he-table td { font-size:.96rem; padding:8px 5px;}
-}
-</style>
-
-<div class="he-container">
-    <div class="he-title"><i class="bi bi-clock-history"></i> Mis Horas Extra</div>
-    <?php if ($mensaje): ?>
-        <div class="alert alert-info shadow-sm text-center mb-3" style="font-size:1.05rem;">
-            <?= htmlspecialchars($mensaje); ?>
+<div class="main-container">
+    <div class="main-card">
+        <div class="card-title-custom">
+            <i class="bi bi-clock-history"></i> Mis Horas Extra
         </div>
-    <?php endif; ?>
+        <p class="text-center mb-4">Justifica tus horas extra pendientes de revisión.</p>
 
-    <div style="text-align:right;margin-bottom:10px;">
-        <input type="text" id="heBuscar" class="form-control" style="border-radius:16px;display:inline-block;width:240px;" placeholder="Buscar en historial...">
-    </div>
-    <div class="table-responsive">
-        <table class="he-table" id="tablaHE">
-            <thead>
-                <tr>
-                    <th>Fecha</th>
-                    <th>Hora Inicio</th>
-                    <th>Hora Fin</th>
-                    <th>Horas Extra</th>
-                    <th>Motivo</th>
-                    <th>Estado</th>
-                    <th>Observaciones</th>
-                    <th style="text-align:center;">Justificar</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (empty($horasExtra)): ?>
+        <?php if ($mensaje): ?>
+            <div class="alert alert-<?= $tipoMensaje ?> text-center"><?= htmlspecialchars($mensaje); ?></div>
+        <?php endif; ?>
+
+        <div class="table-responsive">
+            <table class="table table-custom table-bordered align-middle">
+                <thead>
                     <tr>
-                        <td colspan="8" class="text-center text-muted">No hay horas extra registradas</td>
+                        <th>Fecha</th>
+                        <th>Inicio</th>
+                        <th>Fin</th>
+                        <th>Total Horas</th>
+                        <th>Motivo</th>
+                        <th>Estado</th>
+                        <th>Observaciones del Jefe</th>
+                        <th>Acción</th>
                     </tr>
-                <?php else: ?>
-                    <?php foreach ($horasExtra as $hx): ?>
+                </thead>
+                <tbody>
+                    <?php if (empty($horasExtra)): ?>
+                        <tr><td colspan="8">No tienes horas extra registradas.</td></tr>
+                    <?php else: foreach ($horasExtra as $hx): ?>
                         <tr>
-                            <td><?= htmlspecialchars($hx['Fecha']) ?></td>
+                            <td><?= date('d/m/Y', strtotime($hx['Fecha'])) ?></td>
                             <td><?= htmlspecialchars($hx['hora_inicio']) ?></td>
                             <td><?= htmlspecialchars($hx['hora_fin']) ?></td>
                             <td><?= htmlspecialchars($hx['cantidad_horas']) ?></td>
-                            <td>
-                                <?= ($hx['estado'] == 'Pendiente') ? '<span class="text-muted">Sin justificar</span>' : htmlspecialchars($hx['Motivo']); ?>
-                            </td>
+                            <td><?= htmlspecialchars($hx['Motivo'] ?: 'N/A') ?></td>
                             <td>
                                 <?php
-                                if ($hx['estado'] == 'Pendiente') {
-                                    echo '<span class="he-status he-status-pend">Pendiente</span>';
-                                } else if ($hx['estado'] == 'Justificada') {
-                                    echo '<span class="he-status he-status-jus">Justificada</span>';
-                                } else if ($hx['estado'] == 'Aprobada') {
-                                    echo '<span class="he-status he-status-apr">Aprobada</span>';
-                                } else if ($hx['estado'] == 'Rechazada') {
-                                    echo '<span class="he-status he-status-rech">Rechazada</span>';
-                                } else {
-                                    echo htmlspecialchars($hx['estado']);
-                                }
+                                $estado_lower = strtolower($hx['estado']);
+                                if ($estado_lower == 'pendiente') echo '<span class="badge bg-warning">Pendiente</span>';
+                                else if ($estado_lower == 'justificada') echo '<span class="badge bg-primary">Justificada</span>';
+                                else if ($estado_lower == 'aprobada') echo '<span class="badge bg-success">Aprobada</span>';
+                                else if ($estado_lower == 'rechazada') echo '<span class="badge bg-danger">Rechazada</span>';
+                                else echo '<span class="badge bg-secondary">'.htmlspecialchars($hx['estado']).'</span>';
                                 ?>
                             </td>
-                            <td><?= htmlspecialchars($hx['Observaciones']) ?></td>
-                            <td style="text-align:center;">
-                                <?php
-                                if ($hx['estado'] == 'Pendiente') {
-                                    echo '<button class="he-btn-just" onclick="mostrarJustificar('.$hx['idPermisos'].', \'\')">Justificar</button>';
-                                } else if ($hx['estado'] == 'Justificada') {
-                                    $motivoSafe = htmlspecialchars($hx['Motivo'], ENT_QUOTES);
-                                    echo '<button class="he-btn-just" style="background:#1ba6db;" onclick="mostrarJustificar('.$hx['idPermisos'].', \''.$motivoSafe.'\')">Editar</button>';
-                                } else if ($hx['estado'] == 'Aprobada') {
-                                    echo '<button class="he-btn-just" style="background:#29b16b;" disabled>Aprobada</button>';
-                                } else if ($hx['estado'] == 'Rechazada') {
-                                    echo '<button class="he-btn-just" style="background:#d04d4d;" disabled>Rechazada</button>';
-                                } else {
-                                    echo '-';
-                                }
-                                ?>
+                            <td><?= htmlspecialchars($hx['Observaciones'] ?: '-') ?></td>
+                            <td>
+                                <?php if ($estado_lower == 'pendiente' || $estado_lower == 'justificada'): ?>
+                                    <button class="btn btn-sm btn-primary" onclick="mostrarJustificar('<?= $hx['idPermisos'] ?>', '<?= htmlspecialchars($hx['Motivo'], ENT_QUOTES) ?>')">
+                                        <i class="bi bi-pencil-square"></i> <?= $estado_lower == 'pendiente' ? 'Justificar' : 'Editar' ?>
+                                    </button>
+                                <?php else: ?>
+                                    <button class="btn btn-sm btn-secondary" disabled>Revisado</button>
+                                <?php endif; ?>
                             </td>
                         </tr>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </tbody>
-        </table>
+                    <?php endforeach; endif; ?>
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
-<!-- MODAL JUSTIFICAR -->
-<div id="modalJustificar" style="display:none; position:fixed; z-index:1000; left:0; top:0; width:100vw; height:100vh; background:rgba(0,0,0,0.13);">
-    <div style="background:white; max-width:410px; margin:5% auto; padding:2em 1.3em 1.7em 1.3em; border-radius:1.25em; position:relative; box-shadow:0 6px 22px #97bfe026;">
-        <form method="post" id="formJustificar">
-            <input type="hidden" name="justificar_id" id="justificar_id">
-            <div class="mb-3">
-                <label for="motivo" class="form-label" style="font-weight:600;">Motivo de la justificación:</label>
-                <textarea name="motivo" id="motivo" class="form-control" rows="3" style="border-radius:1em;" required></textarea>
+<div class="modal fade" id="modalJustificar" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="border-radius: 1rem;">
+            <div class="modal-header">
+                <h5 class="modal-title">Justificar Horas Extra</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <button type="submit" class="btn btn-success" style="border-radius:1em;"><i class="bi bi-save"></i> Guardar</button>
-            <button type="button" class="btn btn-secondary" style="border-radius:1em;" onclick="cerrarJustificar()"><i class="bi bi-x-lg"></i> Cancelar</button>
-        </form>
+            <div class="modal-body">
+                <form method="post" id="formJustificar">
+                    <input type="hidden" name="justificar_id" id="justificar_id">
+                    <div class="mb-3">
+                        <label for="motivo" class="form-label">Motivo de la justificación:</label>
+                        <textarea name="motivo" id="motivo" class="form-control" rows="3" required></textarea>
+                    </div>
+                    <div class="text-end">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="submit" class="btn btn-success">Guardar Justificación</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-function mostrarJustificar(id, motivo) {
-    document.getElementById('justificar_id').value = id;
-    document.getElementById('motivo').value = motivo || "";
-    document.getElementById('modalJustificar').style.display = 'block';
-    setTimeout(()=>{document.getElementById('motivo').focus()}, 120);
-}
-function cerrarJustificar() {
-    document.getElementById('modalJustificar').style.display = 'none';
-}
-document.getElementById('heBuscar').addEventListener('input', function() {
-    var filtro = this.value.toLowerCase();
-    var filas = document.querySelectorAll('#tablaHE tbody tr');
-    filas.forEach(function(f){
-        let txt = f.textContent.toLowerCase();
-        f.style.display = (txt.indexOf(filtro) !== -1 || filtro == "") ? '' : 'none';
-    });
-});
+    const modalJustificar = new bootstrap.Modal(document.getElementById('modalJustificar'));
+    function mostrarJustificar(id, motivo) {
+        document.getElementById('justificar_id').value = id;
+        document.getElementById('motivo').value = motivo || "";
+        modalJustificar.show();
+    }
 </script>
 
-<?php include 'footer.php'; ?>
+</body>
+</html>

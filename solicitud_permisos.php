@@ -4,19 +4,17 @@ include 'db.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $colaborador_id = $_SESSION['colaborador_id'] ?? null;
-$persona_id = $_SESSION['persona_id'] ?? null;
 $mensaje = '';
 $tipoMensaje = '';
 
-// --- Catálogo de tipos de permiso (solo los permitidos para esta sección, no vacaciones ni incapacidades) ---
+// Catálogo de tipos de permiso
 $tipos = [];
 $res_tipos = $conn->query("SELECT idTipoPermiso, Descripcion FROM tipo_permiso_cat WHERE LOWER(Descripcion) NOT IN ('vacaciones','incapacidad','incapacidades')");
 while($row = $res_tipos->fetch_assoc()) {
     $tipos[] = $row;
 }
 
-// --- ID estado pendiente ---
-$estado_pendiente = 3; // según tu tabla estado_cat
+$estado_pendiente_id = 3;
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fecha_inicio = $_POST['fecha_inicio'] ?? '';
@@ -24,206 +22,203 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $motivo = trim($_POST['motivo'] ?? '');
     $id_tipo_permiso = intval($_POST['id_tipo_permiso'] ?? 0);
     $observaciones = trim($_POST['observaciones'] ?? '');
+    $archivo_url = '';
     $fechaHoy = date('Y-m-d');
-    $archivo = '';
 
-    // Validación
-    if ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
-        $mensaje = "No puedes solicitar permisos en fechas anteriores a hoy.";
+    // --- INICIO DE LA CORRECCIÓN ---
+    // 1. VALIDACIONES PRIMERO
+    if (empty($fecha_inicio) || empty($fecha_fin) || empty($motivo) || empty($id_tipo_permiso)) {
+        $mensaje = "Debes completar todos los campos obligatorios.";
+        $tipoMensaje = 'danger';
+    } elseif ($fecha_inicio < $fechaHoy || $fecha_fin < $fechaHoy) {
+        $mensaje = "No puedes solicitar permisos para fechas pasadas.";
         $tipoMensaje = 'danger';
     } elseif ($fecha_fin < $fecha_inicio) {
-        $mensaje = "La fecha de fin no puede ser menor que la de inicio.";
-        $tipoMensaje = 'danger';
-    } elseif (empty($motivo)) {
-        $mensaje = "Debes especificar un motivo.";
-        $tipoMensaje = 'danger';
-    } elseif (!$id_tipo_permiso) {
-        $mensaje = "Debes seleccionar un tipo de permiso.";
+        $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
         $tipoMensaje = 'danger';
     } else {
-        // Manejar archivo
-        if (isset($_FILES['comprobante']) && $_FILES['comprobante']['error'] == UPLOAD_ERR_OK) {
-            $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
-            $nombre_archivo = 'permiso_' . time() . '_' . rand(100,999) . '.' . $ext;
-            $ruta_destino = "uploads/" . $nombre_archivo;
-            if (move_uploaded_file($_FILES['comprobante']['tmp_name'], $ruta_destino)) {
-                $archivo = $nombre_archivo;
-            }
-        }
-        $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url)
-                VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?)";
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iiisssss", $colaborador_id, $id_tipo_permiso, $estado_pendiente, $fecha_inicio, $fecha_fin, $motivo, $observaciones, $archivo);
-        if ($stmt->execute()) {
-            $mensaje = "✅ Permiso solicitado correctamente.";
-            $tipoMensaje = 'success';
-        } else {
-            $mensaje = "Error al registrar el permiso.";
+        // 2. Si las validaciones pasan, proceder con la lógica de inserción
+        // Verificar si ya existe un permiso para esa fecha
+        $check_sql = "SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND fecha_inicio = ?";
+        $check_stmt = $conn->prepare($check_sql);
+        $check_stmt->bind_param("is", $colaborador_id, $fecha_inicio);
+        $check_stmt->execute();
+        $check_stmt->store_result();
+
+        if ($check_stmt->num_rows > 0) {
+            $mensaje = "Ya tienes un permiso registrado para esa fecha de inicio.";
             $tipoMensaje = 'danger';
+        } else {
+            // Manejo de archivo adjunto
+            if (isset($_FILES['comprobante']) && $_FILES['comprobante']['error'] == UPLOAD_ERR_OK) {
+                $carpeta_destino = "uploads/permisos/";
+                if (!is_dir($carpeta_destino)) mkdir($carpeta_destino, 0777, true);
+                $ext = pathinfo($_FILES['comprobante']['name'], PATHINFO_EXTENSION);
+                $nombre_archivo = 'permiso_' . $colaborador_id . '_' . time() . '.' . $ext;
+                $ruta_destino = $carpeta_destino . $nombre_archivo;
+                if (move_uploaded_file($_FILES['comprobante']['tmp_name'], $ruta_destino)) {
+                    $archivo_url = $ruta_destino;
+                }
+            }
+            
+            // Inserción
+            $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url)
+                    VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?)";
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("iiisssss", $colaborador_id, $id_tipo_permiso, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $motivo, $observaciones, $archivo_url);
+            
+            if ($stmt->execute()) {
+                $mensaje = "¡Permiso solicitado correctamente!";
+                $tipoMensaje = 'success';
+            } else {
+                $mensaje = "Error al registrar el permiso: " . $stmt->error;
+                $tipoMensaje = 'danger';
+            }
+            $stmt->close();
         }
-        $stmt->close();
+        $check_stmt->close();
     }
+    // --- FIN DE LA CORRECCIÓN ---
 }
 
-// --- Historial de permisos del colaborador (excluye vacaciones e incapacidad) ---
+// Historial de permisos
 $historial = [];
-$sql = "SELECT fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url, id_tipo_permiso_fk, id_estado_fk 
-        FROM permisos 
-        WHERE id_colaborador_fk = ? 
-          AND id_tipo_permiso_fk IN (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) NOT IN ('vacaciones','incapacidad','incapacidades'))
-        ORDER BY fecha_inicio DESC";
-$stmt = $conn->prepare($sql);
-$stmt->bind_param("i", $colaborador_id);
-$stmt->execute();
-$stmt->bind_result($h_inicio, $h_fin, $h_motivo, $h_obs, $h_archivo, $h_tipo, $h_estado);
-while ($stmt->fetch()) {
-    $historial[] = [
-        'inicio' => $h_inicio,
-        'fin' => $h_fin,
-        'motivo' => $h_motivo,
-        'obs' => $h_obs,
-        'archivo' => $h_archivo,
-        'tipo' => $h_tipo,
-        'estado' => $h_estado
-    ];
+$sql_historial = "SELECT p.fecha_inicio, p.fecha_fin, p.motivo, p.observaciones, p.comprobante_url, tpc.Descripcion AS tipo_permiso, ec.Descripcion AS estado
+                  FROM permisos p
+                  JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
+                  JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
+                  WHERE p.id_colaborador_fk = ? 
+                  AND LOWER(tpc.Descripcion) NOT IN ('vacaciones','incapacidad','incapacidades')
+                  ORDER BY p.fecha_inicio DESC";
+$stmt_historial = $conn->prepare($sql_historial);
+$stmt_historial->bind_param("i", $colaborador_id);
+$stmt_historial->execute();
+$result_historial = $stmt_historial->get_result();
+while ($row = $result_historial->fetch_assoc()) {
+    $historial[] = $row;
 }
-$stmt->close();
-
-// --- Mostrar tipo de permiso ---
-function nombreTipoPermiso($id, $tipos) {
-    foreach($tipos as $tipo) {
-        if ($tipo['idTipoPermiso'] == $id) return $tipo['Descripcion'];
-    }
-    return 'Desconocido';
-}
-
-// --- Badge color estado ---
-function estadoBadge($id) {
-    switch ($id) {
-        case 3: return '<span class="badge bg-warning text-dark">Pendiente</span>';
-        case 4: return '<span class="badge bg-success">Aprobado</span>';
-        case 5: return '<span class="badge bg-danger">Rechazado</span>';
-        default: return '<span class="badge bg-secondary">Desconocido</span>';
-    }
-}
+$stmt_historial->close();
 ?>
 
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
-<style>
-    body { background: linear-gradient(135deg, #f5faff 0%, #f4f7fc 100%) !important; }
-    .center-container { min-height: 95vh; display: flex; align-items: center; justify-content: center; }
-    .form-card { background: #fff; border-radius: 2.3rem; box-shadow: 0 8px 48px 0 rgba(44,62,80,.14); padding: 3.2rem 2.1rem 2rem 2.1rem; max-width: 540px; width: 100%; animation: fadeInDown 0.9s;}
-    @keyframes fadeInDown { 0% { opacity: 0; transform: translateY(-25px);} 100% { opacity: 1; transform: translateY(0);} }
-    .form-title { font-weight: 900; font-size: 2.1rem; margin-bottom: 1.1rem; color: #233b4b; display: flex; align-items: center; justify-content: center; gap: 0.7rem;}
-    .form-title i { color: #399bf7; font-size: 2.5rem;}
-    .input-group-text { background: #f6faff; border: none; color: #399bf7; font-size: 1.2rem; border-radius: 1.1rem 0 0 1.1rem;}
-    .form-control { font-size: 1.13rem; padding: .9rem .8rem; border-radius: 0 1.1rem 1.1rem 0;}
-    .form-control:focus { border-color: #399bf7; box-shadow: 0 0 0 2px #399bf727;}
-    .btn-app { background: linear-gradient(90deg, #399bf7 75%, #72d6fd 100%); color: #fff; font-weight: 700; font-size: 1.15rem; padding: 1.03rem 0; border-radius: 1.3rem; box-shadow: 0 2px 12px #399bf723; transition: background .17s, box-shadow .17s; width: 100%; margin-top: 10px; letter-spacing: .7px;}
-    .btn-app:hover { background: linear-gradient(90deg, #72d6fd 15%, #399bf7 100%); color: #fff; box-shadow: 0 8px 24px #399bf722; }
-    .alert { font-size: 1.05rem; margin-bottom: 1.3rem; border-radius: 1.1rem;}
-    .historial-title { font-weight: 700; color: #166cc2; margin-top: 2.5rem; font-size: 1.18rem; margin-bottom: .7rem;}
-    .table-permisos { border-radius: 1.1rem; overflow: hidden; background: #f8fbfd;}
-    .table-permisos th { background: #f0faff; color: #238cc8;}
-    .table-permisos td, .table-permisos th { font-size: .98rem; padding: 0.73rem;}
-    @media (max-width:600px){ .form-card { max-width: 98vw; padding: 2.2rem 1.1rem 1.5rem 1.1rem; } .form-title { font-size: 1.2rem;} .table-permisos td, .table-permisos th { font-size: .87rem; padding: .43rem;}}
-</style>
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Solicitar Permiso - Edginton S.A.</title>
+    <style>
+        body { background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important; font-family: 'Poppins', sans-serif; }
+        .main-container { max-width: 880px; margin: 48px auto 0; padding: 0 15px; }
+        .main-card { background: #fff; border-radius: 2.1rem; box-shadow: 0 8px 38px 0 rgba(44,62,80,.12); padding: 2.2rem 2.1rem 1.7rem 2.1rem; margin-bottom: 2.2rem; animation: fadeInDown 0.9s; }
+        .card-title-custom { font-size: 2.2rem; font-weight: 900; color: #1a3961; letter-spacing: .7px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: .8rem; }
+        .card-title-custom i { color: #3499ea; font-size: 2.2rem; }
+        .form-label { color: #288cc8; font-weight: 600; }
+        .form-control, .form-select { border-radius: 0.9rem; }
+        .btn-submit-custom { background: linear-gradient(90deg, #1f8ff7 75%, #53e3fc 100%); color: #fff; font-weight: 700; font-size: 1.05rem; border-radius: 0.8rem; padding: .63rem 1.5rem; box-shadow: 0 2px 12px #1f8ff722; width: 100%; margin-top: 1rem; border: none; }
+        .btn-submit-custom:hover { background: linear-gradient(90deg, #53e3fc 25%, #1f8ff7 100%); color: #fff; }
+        .table-custom { background: #f8fafd; border-radius: 1.15rem; overflow: hidden; box-shadow: 0 4px 24px #23b6ff10; }
+        .table-custom th { background: #e9f6ff; color: #288cc8; font-weight: 700; font-size: 1rem; }
+        .table-custom td, .table-custom th { padding: 0.75rem 0.7rem; text-align: center; vertical-align: middle; }
+        .badge.bg-warning { background-color: #ffd237 !important; color: #6a4d00 !important; }
+        .badge.bg-success { background-color: #01b87f !important; }
+        .badge.bg-danger { background-color: #ff6565 !important; }
+        .section-title { font-weight: 700; color: #1a3961; font-size: 1.4rem; margin-bottom: 1rem; text-align: center; }
+        @media (max-width: 600px) { .main-card { padding: 1.1rem 0.3rem 0.9rem 0.3rem; } .card-title-custom { font-size: 1.3rem; } .table-custom th, .table-custom td { font-size: .85rem; padding: 0.4rem 0.3rem;} }
+    </style>
+</head>
+<body>
 
-<div class="center-container">
-    <div>
-        <div class="form-card">
-            <div class="form-title animate__animated animate__fadeInDown">
-                <i class="bi bi-calendar-check"></i> Solicitar Permiso
-            </div>
-            <div id="msg-php">
-                <?php if($mensaje): ?>
-                    <div class="alert alert-<?= $tipoMensaje ?> text-center animate__animated animate__fadeInDown" id="php-alert">
-                        <?= htmlspecialchars($mensaje) ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-            <form method="post" enctype="multipart/form-data" class="needs-validation" id="permisoForm" novalidate autocomplete="off">
-                <div class="mb-4 input-group">
-                    <span class="input-group-text"><i class="bi bi-list-ul"></i></span>
-                    <select name="id_tipo_permiso" id="id_tipo_permiso" class="form-control" required>
-                        <option value="">Seleccione tipo de permiso</option>
+<div class="main-container">
+    <div class="main-card">
+        <div class="card-title-custom animate__animated animate__fadeInDown">
+            <i class="bi bi-calendar-plus-fill"></i> Solicitar Permiso
+        </div>
+        <p class="text-center mb-4">Registra aquí tus solicitudes de permisos.</p>
+
+        <?php if ($mensaje): ?>
+            <div class="alert alert-<?= $tipoMensaje ?> text-center"><?= htmlspecialchars($mensaje) ?></div>
+        <?php endif; ?>
+
+        <form method="post" enctype="multipart/form-data" id="permisoForm" novalidate>
+            <div class="row g-3">
+                <div class="col-md-12">
+                    <label class="form-label">Tipo de Permiso*</label>
+                    <select name="id_tipo_permiso" class="form-select" required>
+                        <option value="">Seleccione...</option>
                         <?php foreach($tipos as $tipo): ?>
                             <option value="<?= $tipo['idTipoPermiso'] ?>"><?= htmlspecialchars($tipo['Descripcion']) ?></option>
-                        <?php endforeach ?>
+                        <?php endforeach; ?>
                     </select>
-                    <div class="invalid-feedback">Tipo requerido.</div>
                 </div>
-                <div class="row gx-2 gy-2">
-                    <div class="col-6 input-group mb-4">
-                        <span class="input-group-text"><i class="bi bi-calendar-event"></i></span>
-                        <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
-                        <div class="invalid-feedback">Fecha inicio requerida.</div>
-                    </div>
-                    <div class="col-6 input-group mb-4">
-                        <span class="input-group-text"><i class="bi bi-calendar-event-fill"></i></span>
-                        <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
-                        <div class="invalid-feedback">Fecha fin requerida.</div>
-                    </div>
+                <div class="col-md-6">
+                    <label class="form-label">Fecha de Inicio*</label>
+                    <input type="date" name="fecha_inicio" id="fecha_inicio" class="form-control" min="<?= date('Y-m-d') ?>" required>
                 </div>
-                <div class="mb-4 input-group">
-                    <span class="input-group-text"><i class="bi bi-pen"></i></span>
-                    <input type="text" name="motivo" id="motivo" class="form-control" placeholder="Motivo del permiso" maxlength="120" required>
-                    <div class="invalid-feedback">Motivo requerido.</div>
+                <div class="col-md-6">
+                    <label class="form-label">Fecha de Fin*</label>
+                    <input type="date" name="fecha_fin" id="fecha_fin" class="form-control" min="<?= date('Y-m-d') ?>" required>
                 </div>
-                <div class="mb-4 input-group">
-                    <span class="input-group-text"><i class="bi bi-chat-left-text"></i></span>
-                    <input type="text" name="observaciones" id="observaciones" class="form-control" placeholder="Observaciones (opcional)" maxlength="200">
+                <div class="col-md-12">
+                    <label class="form-label">Motivo*</label>
+                    <input type="text" name="motivo" class="form-control" placeholder="Ej: Cita médica" required>
                 </div>
-                <div class="mb-4 input-group">
-                    <span class="input-group-text"><i class="bi bi-paperclip"></i></span>
-                    <input type="file" name="comprobante" id="comprobante" class="form-control" accept=".pdf,.jpg,.png,.jpeg">
+                <div class="col-md-12">
+                    <label class="form-label">Observaciones (Opcional)</label>
+                    <textarea name="observaciones" class="form-control" rows="2" placeholder="Detalles adicionales..."></textarea>
                 </div>
-                <button type="submit" id="btnEnviar" class="btn btn-app mt-1">
-                    <span id="btnText"><i class="bi bi-send"></i> Enviar Solicitud</span>
-                    <span id="btnSpinner" class="spinner-border spinner-border-sm d-none"></span>
-                </button>
-            </form>
-        </div>
-        <div class="historial-title mt-5 mb-2 animate__animated animate__fadeInDown">
-            <i class="bi bi-clock-history"></i> Historial de permisos
+                <div class="col-md-12">
+                    <label class="form-label">Adjuntar Comprobante (Opcional)</label>
+                    <input type="file" name="comprobante" class="form-control" accept=".pdf,.jpg,.jpeg,.png">
+                </div>
+            </div>
+            <button type="submit" class="btn btn-submit-custom">
+                <i class="bi bi-send-fill"></i> Enviar Solicitud
+            </button>
+        </form>
+    </div>
+
+    <div class="main-card mt-4">
+        <div class="section-title">
+            <i class="bi bi-clock-history"></i> Historial de Permisos
         </div>
         <div class="table-responsive">
-            <table class="table table-permisos table-bordered text-center">
+            <table class="table table-custom table-bordered align-middle">
                 <thead>
                     <tr>
                         <th>Tipo</th>
                         <th>Inicio</th>
                         <th>Fin</th>
                         <th>Motivo</th>
-                        <th>Observaciones</th>
                         <th>Estado</th>
                         <th>Comprobante</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <?php if (count($historial)): ?>
-                        <?php foreach ($historial as $row): ?>
+                    <?php if (empty($historial)): ?>
+                        <tr><td colspan="6">No tienes permisos registrados.</td></tr>
+                    <?php else: foreach ($historial as $row): ?>
                         <tr>
-                            <td><?= nombreTipoPermiso($row['tipo'], $tipos) ?></td>
-                            <td><?= $row['inicio'] ? date('d/m/Y', strtotime($row['inicio'])) : '-' ?></td>
-                            <td><?= $row['fin'] ? date('d/m/Y', strtotime($row['fin'])) : '-' ?></td>
+                            <td><?= htmlspecialchars($row['tipo_permiso']) ?></td>
+                            <td><?= date('d/m/Y', strtotime($row['fecha_inicio'])) ?></td>
+                            <td><?= date('d/m/Y', strtotime($row['fecha_fin'])) ?></td>
                             <td><?= htmlspecialchars($row['motivo']) ?></td>
-                            <td><?= htmlspecialchars($row['obs']) ?></td>
-                            <td><?= estadoBadge($row['estado']) ?></td>
                             <td>
-                                <?php if ($row['archivo']): ?>
-                                    <a href="uploads/<?= htmlspecialchars($row['archivo']) ?>" target="_blank" class="btn btn-sm btn-outline-info"><i class="bi bi-file-earmark-arrow-down"></i> Ver</a>
+                                <?php
+                                $estado_lower = strtolower($row['estado']);
+                                if ($estado_lower == 'pendiente') echo '<span class="badge bg-warning">Pendiente</span>';
+                                else if ($estado_lower == 'aprobado') echo '<span class="badge bg-success">Aprobado</span>';
+                                else if ($estado_lower == 'rechazado') echo '<span class="badge bg-danger">Rechazado</span>';
+                                else echo '<span class="badge bg-info">'.htmlspecialchars($row['estado']).'</span>';
+                                ?>
+                            </td>
+                            <td>
+                                <?php if ($row['comprobante_url']): ?>
+                                    <a href="<?= htmlspecialchars($row['comprobante_url']) ?>" target="_blank" class="btn btn-sm btn-outline-primary"><i class="bi bi-eye"></i></a>
                                 <?php else: ?>
                                     -
-                                <?php endif ?>
+                                <?php endif; ?>
                             </td>
                         </tr>
-                        <?php endforeach ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="7" class="text-muted">No hay permisos registrados.</td>
-                        </tr>
-                    <?php endif ?>
+                    <?php endforeach; endif; ?>
                 </tbody>
             </table>
         </div>
@@ -231,31 +226,27 @@ function estadoBadge($id) {
 </div>
 
 <script>
-const fechaInicio = document.getElementById('fecha_inicio');
-const fechaFin = document.getElementById('fecha_fin');
-fechaInicio.addEventListener('change', function() {
-    fechaFin.min = fechaInicio.value;
-    if(fechaFin.value < fechaInicio.value) fechaFin.value = fechaInicio.value;
-});
-fechaFin.addEventListener('change', function() {
-    if(fechaFin.value < fechaInicio.value) fechaFin.value = fechaInicio.value;
-});
-// Bootstrap validation + spinner
-(() => {
-  'use strict';
-  const form = document.getElementById('permisoForm');
-  form.addEventListener('submit', function (event) {
-    if (!form.checkValidity() || (fechaFin.value && fechaInicio.value && fechaFin.value < fechaInicio.value)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (fechaFin.value && fechaInicio.value && fechaFin.value < fechaInicio.value) {
-          fechaFin.classList.add('is-invalid');
-      }
-    } else {
-      document.getElementById('btnText').classList.add('d-none');
-      document.getElementById('btnSpinner').classList.remove('d-none');
-    }
-    form.classList.add('was-validated');
-  }, false);
-})();
+    const fechaInicio = document.getElementById('fecha_inicio');
+    const fechaFin = document.getElementById('fecha_fin');
+    fechaInicio.addEventListener('change', function() {
+        if (fechaFin.value < fechaInicio.value) {
+            fechaFin.value = fechaInicio.value;
+        }
+        fechaFin.min = fechaInicio.value;
+    });
+
+    (() => {
+        'use strict';
+        const form = document.getElementById('permisoForm');
+        form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            form.classList.add('was-validated');
+        }, false);
+    })();
 </script>
+
+</body>
+</html>

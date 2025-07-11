@@ -159,16 +159,21 @@ function rolName($rol) {
                 <li class="nav-item"><a class="nav-link <?= isActive(['reporte_global.php']) ? 'active' : '' ?>" href="reporte_global.php"><i class="bi bi-bar-chart-line"></i> Reporte Global</a></li>
             <?php endif; ?>
             
-            <?php if ($rol == 2): ?>
+            <?php if ($rol == 2): // Menú Colaborador CORREGIDO ?>
                 <li class="nav-item"><a class="nav-link <?= isActive(['index_colaborador.php']) ? 'active' : '' ?>" href="index_colaborador.php"><i class="bi bi-house-door"></i> Inicio</a></li>
+                
                 <li class="nav-heading">Mi Información</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['mi_perfil.php']) ? 'active' : '' ?>" href="mi_perfil.php"><i class="bi bi-person-circle"></i> Mi Perfil</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['control_asistencia.php']) ? 'active' : '' ?>" href="control_asistencia.php"><i class="bi bi-calendar-check"></i> Mi Asistencia</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['salario.php']) ? 'active' : '' ?>" href="salario.php"><i class="bi bi-cash-coin"></i> Mis Pagos</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['ver_evaluaciones.php']) ? 'active' : '' ?>" href="ver_evaluaciones.php"><i class="bi bi-star"></i> Mis Evaluaciones</a></li>
+
                 <li class="nav-heading">Mis Solicitudes</li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['mis_solicitudes.php']) ? 'active' : '' ?>" href="mis_solicitudes.php"><i class="bi bi-journal-text"></i> Todas Mis Solicitudes</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_vacaciones.php']) ? 'active' : '' ?>" href="solicitud_vacaciones.php"><i class="bi-sun-fill"></i> Solicitar Vacaciones</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_permisos.php']) ? 'active' : '' ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-plus"></i> Solicitar Permiso</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['horas_extra.php']) ? 'active' : '' ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i> Justificar Horas Extra</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_incapacidad.php']) ? 'active' : '' ?>" href="solicitud_incapacidad.php"><i class="bi bi-bandaid"></i> Registrar Incapacidad</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['mis_solicitudes.php']) ? 'active' : '' ?>" href="mis_solicitudes.php"><i class="bi bi-journal-text"></i> Ver Mis Solicitudes</a></li>
             <?php endif; ?>
 
             <?php if ($rol == 3): ?>
