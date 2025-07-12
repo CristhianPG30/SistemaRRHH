@@ -21,8 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fecha_inicio = $_POST['fecha_inicio'] ?? '';
     $es_por_horas = isset($_POST['por_horas']);
     $fecha_fin = $es_por_horas ? $fecha_inicio : ($_POST['fecha_fin'] ?? '');
-    $hora_inicio = $es_por_horas ? ($_POST['hora_inicio'] ?? null) : null;
-    $hora_fin = $es_por_horas ? ($_POST['hora_fin'] ?? null) : null;
+    
+    // --- INICIO DE LA CORRECCIÓN ---
+    // Se asigna '00:00:00' como valor por defecto en lugar de null.
+    $hora_inicio = $es_por_horas ? ($_POST['hora_inicio'] ?? '00:00:00') : '00:00:00';
+    $hora_fin = $es_por_horas ? ($_POST['hora_fin'] ?? '00:00:00') : '00:00:00';
+    // --- FIN DE LA CORRECCIÓN ---
     
     $motivo = trim($_POST['motivo'] ?? '');
     $id_tipo_permiso = intval($_POST['id_tipo_permiso'] ?? 0);
@@ -31,7 +35,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $fechaHoy = date('Y-m-d');
 
     // Validaciones
-    if (empty($fecha_inicio) || empty($fecha_fin) || empty($motivo) || empty($id_tipo_permiso) || ($es_por_horas && (empty($hora_inicio) || empty($hora_fin)))) {
+    if (empty($fecha_inicio) || empty($fecha_fin) || empty($motivo) || empty($id_tipo_permiso) || ($es_por_horas && (empty($_POST['hora_inicio']) || empty($_POST['hora_fin'])))) {
         $mensaje = "Debes completar todos los campos obligatorios.";
         $tipoMensaje = 'danger';
     } elseif ($fecha_inicio < $fechaHoy) {
@@ -40,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } elseif ($fecha_fin < $fecha_inicio) {
         $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
         $tipoMensaje = 'danger';
-    } elseif ($es_por_horas && $hora_inicio && $hora_fin && $hora_fin <= $hora_inicio) {
+    } elseif ($es_por_horas && !empty($_POST['hora_inicio']) && !empty($_POST['hora_fin']) && $_POST['hora_fin'] <= $_POST['hora_inicio']) {
         $mensaje = "La hora de fin debe ser posterior a la hora de inicio.";
         $tipoMensaje = 'danger';
     } else {
@@ -65,14 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             }
             
-            // --- INICIO DE LA CORRECCIÓN ---
-            // Se debe modificar la tabla permisos para añadir las columnas hora_inicio y hora_fin
             $sql = "INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, observaciones, comprobante_url, hora_inicio, hora_fin)
                     VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)";
             $stmt = $conn->prepare($sql);
-            // La cadena de tipos ahora tiene 10 caracteres para coincidir con los 10 placeholders y variables
             $stmt->bind_param("iiisssssss", $colaborador_id, $id_tipo_permiso, $estado_pendiente_id, $fecha_inicio, $fecha_fin, $motivo, $observaciones, $archivo_url, $hora_inicio, $hora_fin);
-            // --- FIN DE LA CORRECCIÓN ---
             
             if ($stmt->execute()) {
                 $mensaje = "¡Permiso solicitado correctamente!";
@@ -225,7 +225,7 @@ $stmt_historial->close();
                                 <?= ($row['fecha_fin'] && $row['fecha_fin'] != $row['fecha_inicio']) ? ' al '.date('d/m/Y', strtotime($row['fecha_fin'])) : '' ?>
                             </td>
                             <td>
-                                <?php if ($row['hora_inicio']): ?>
+                                <?php if ($row['hora_inicio'] && $row['hora_inicio'] != '00:00:00'): ?>
                                     <span class="badge bg-info"><?= date('g:i A', strtotime($row['hora_inicio'])) ?> - <?= date('g:i A', strtotime($row['hora_fin'])) ?></span>
                                 <?php else: ?>
                                     <span class="badge bg-secondary">Día completo</span>
