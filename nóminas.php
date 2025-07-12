@@ -87,24 +87,28 @@ function calcularDeduccionesDeLey($salario_bruto, $conn)
     return $deducciones;
 }
 
-// --- CORRECCIÓN #1: Función de Impuesto sobre la Renta actualizada ---
+// --- CORRECCIÓN #1: La función ahora devuelve un array con el desglose ---
 function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
 {
     $tax_config_path = __DIR__ . "/js/tramos_impuesto_renta.json";
-    if (!file_exists($tax_config_path)) return 0;
+    $default_return = ['total' => 0, 'bruto' => 0, 'creditos' => 0, 'tramo_aplicado' => '0%'];
+    if (!file_exists($tax_config_path)) {
+        return $default_return;
+    }
     
     $config_data = json_decode(file_get_contents($tax_config_path), true);
     $tax_brackets = $config_data['tramos'] ?? [];
     $credito_por_hijo = $config_data['creditos_fiscales']['hijo'] ?? 0;
     
     $impuesto_calculado = 0;
+    $tramo_aplicado = '0%';
 
-    // Recorre los tramos en orden inverso para encontrar el correcto
     for ($i = count($tax_brackets) - 1; $i >= 0; $i--) {
         $tramo = $tax_brackets[$i];
         if ($salario_imponible > $tramo['salario_minimo']) {
             $excedente = $salario_imponible - $tramo['salario_minimo'];
             $impuesto_calculado = ($tramo['monto_fijo'] ?? 0) + ($excedente * ($tramo['porcentaje'] / 100));
+            $tramo_aplicado = $tramo['porcentaje'] . '%';
             break; 
         }
     }
@@ -112,7 +116,12 @@ function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
     $credito_total_hijos = $cantidad_hijos * $credito_por_hijo;
     $impuesto_final = $impuesto_calculado - $credito_total_hijos;
     
-    return max(0, $impuesto_final);
+    return [
+        'total' => max(0, $impuesto_final),
+        'bruto' => $impuesto_calculado,
+        'creditos' => $credito_total_hijos,
+        'tramo_aplicado' => $tramo_aplicado
+    ];
 }
 
 function obtenerCategoriasSalariales($conn)
@@ -134,7 +143,6 @@ function obtenerPlanilla($anio, $mes, $conn)
     $categorias_salariales = obtenerCategoriasSalariales($conn);
     $dias_laborales_del_mes = calcularDiasLaborales($anio, $mes);
     
-    // --- CORRECCIÓN #2: Se añade p.cantidad_hijos a la consulta ---
     $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, p.cantidad_hijos, c.idColaborador, c.salario_bruto as salario_base 
                           FROM colaborador c 
                           JOIN persona p ON c.id_persona_fk = p.idPersona 
@@ -241,12 +249,12 @@ function obtenerPlanilla($anio, $mes, $conn)
         
         $salario_imponible_renta = $salario_bruto_calculado - $ccss_deduction_amount;
         
-        // --- CORRECCIÓN #3: Se pasa la cantidad de hijos al cálculo de renta ---
-        $impuesto_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos']);
+        // --- CORRECCIÓN #2: Se llama a la función de renta y se guarda el desglose ---
+        $calculo_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos']);
+        $impuesto_renta = $calculo_renta['total']; 
 
-        $deducciones_ley['detalles'][] = ['id' => 99, 'descripcion' => 'Impuesto sobre la Renta', 'monto' => $impuesto_renta, 'porcentaje' => 0];
-        if ($deduccion_permisos_sin_goce > 0) {
-            $deducciones_ley['detalles'][] = ['id' => 100, 'descripcion' => 'Deducción por permisos sin goce', 'monto' => $deduccion_permisos_sin_goce, 'porcentaje' => 0];
+        if($deduccion_permisos_sin_goce > 0){
+            $deducciones_ley['detalles'][] = ['id' => 100, 'descripcion' => 'Permisos sin goce', 'monto' => $deduccion_permisos_sin_goce, 'porcentaje' => 0];
         }
         
         $total_deducciones_final = $deducciones_ley['total'] + $impuesto_renta + $deduccion_permisos_sin_goce;
@@ -266,6 +274,7 @@ function obtenerPlanilla($anio, $mes, $conn)
                 'permisos' => $permisos_del_mes_por_tipo
             ],
             'deducciones_detalles' => $deducciones_ley['detalles'],
+            'desglose_renta' => $calculo_renta,
             'total_deducciones' => $total_deducciones_final,
             'salario_neto' => $salario_neto
         ]);
@@ -454,19 +463,37 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
+                    <div class="p-3 mb-3" style="background-color: #f8f9fa; border-radius: .5rem;">
+                        <div class="row">
+                            <div class="col-6">
+                                <small class="text-muted">SALARIO BASE</small>
+                                <div class="fs-5 fw-bold">₡<?= number_format($col['salario_base'], 2) ?></div>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted">SALARIO BRUTO AJUSTADO</small>
+                                <div class="fs-5 fw-bold">₡<?= number_format($col['salario_bruto_calculado'], 2) ?></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="row g-4">
                         <div class="col-md-6">
-                            <h6 class="text-success fw-bold"><i class="bi bi-plus-circle-fill me-2"></i>INGRESOS</h6>
+                            <h6 class="text-success fw-bold"><i class="bi bi-plus-circle-fill me-2"></i>INGRESOS ADICIONALES</h6>
                             <ul class="list-group list-group-flush">
-                                <li class="list-group-item d-flex justify-content-between"><span>Salario Base Mensual:</span> <strong>₡<?= number_format($col['salario_base'], 2) ?></strong></li>
-                                <li class="list-group-item d-flex justify-content-between"><span>Pago Horas Extra (<?= number_format($col['total_horas_extra'], 2) ?>h):</span> <strong>+ ₡<?= number_format($col['pago_horas_extra'], 2) ?></strong></li>
+                                <li class="list-group-item d-flex justify-content-between">
+                                    <span>Pago Horas Extra (<?= number_format($col['total_horas_extra'], 2) ?>h)</span>
+                                    <strong>+ ₡<?= number_format($col['pago_horas_extra'], 2) ?></strong>
+                                </li>
                             </ul>
                         </div>
                         <div class="col-md-6">
                             <h6 class="text-danger fw-bold"><i class="bi bi-dash-circle-fill me-2"></i>DEDUCCIONES</h6>
-                             <ul class="list-group list-group-flush">
+                            <ul class="list-group list-group-flush">
                                 <?php if($col['dias_ausencia'] > 0): ?>
-                                    <li class="list-group-item d-flex justify-content-between"><span>Ausencias (<?= $col['dias_ausencia'] ?> días):</span> <strong>- ₡<?= number_format($col['deduccion_ausencia'], 2) ?></strong></li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Ausencias (<?= $col['dias_ausencia'] ?> días)</span>
+                                        <strong>- ₡<?= number_format($col['deduccion_ausencia'], 2) ?></strong>
+                                    </li>
                                 <?php endif; ?>
                                 <?php foreach ($col['deducciones_detalles'] as $deduccion): ?>
                                     <li class="list-group-item d-flex justify-content-between">
@@ -478,20 +505,26 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
                                         <strong>- ₡<?= number_format($deduccion['monto'], 2) ?></strong>
                                     </li>
                                 <?php endforeach; ?>
+                                
+                                <li class="list-group-item">
+                                    <div class="d-flex justify-content-between">
+                                        <span>Impuesto sobre la Renta</span>
+                                        <strong>- ₡<?= number_format($col['desglose_renta']['total'], 2) ?></strong>
+                                    </div>
+                                    <div class="ps-3 small text-muted">
+                                        <div>Base para Renta: ₡<?= number_format($col['salario_imponible_renta'], 2) ?></div>
+                                        <div>Cálculo Bruto (Tramo <?= $col['desglose_renta']['tramo_aplicado'] ?>): ₡<?= number_format($col['desglose_renta']['bruto'], 2) ?></div>
+                                        <?php if ($col['desglose_renta']['creditos'] > 0): ?>
+                                            <div>Créditos Fiscales (<?= $col['cantidad_hijos'] ?> hijos): - ₡<?= number_format($col['desglose_renta']['creditos'], 2) ?></div>
+                                        <?php endif; ?>
+                                    </div>
+                                </li>
                             </ul>
                         </div>
                     </div>
                     <hr>
                     <div class="bg-light p-3 rounded">
-                        <div class="d-flex justify-content-between">
-                            <span class="fw-bold">Salario Bruto (Ajustado por ausencias):</span>
-                            <span class="fw-bold">₡<?= number_format($col['salario_bruto_calculado'], 2) ?></span>
-                        </div>
-                        <div class="d-flex justify-content-between text-muted small">
-                            <span>Base para Renta (Bruto Ajustado - CCSS):</span>
-                            <span>₡<?= number_format($col['salario_imponible_renta'], 2) ?></span>
-                        </div>
-                        <div class="d-flex justify-content-between text-danger mt-1">
+                        <div class="d-flex justify-content-between text-danger">
                             <span>Total Deducciones:</span>
                             <span>- ₡<?= number_format($col['total_deducciones'], 2) ?></span>
                         </div>
@@ -501,7 +534,7 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
                             <h5 class="mb-0 fw-bolder text-success">₡<?= number_format($col['salario_neto'], 2) ?></h5>
                         </div>
                     </div>
-                </div>
+                     </div>
             </div>
         </div>
     </div>
