@@ -9,7 +9,8 @@ require_once 'db.php';
 $mensaje = '';
 $tipoMensaje = 'info';
 $resultados_generados = [];
-$anio_seleccionado = isset($_REQUEST['anio']) ? intval($_REQUEST['anio']) : date('Y');
+// El año seleccionado ahora será siempre el año actual.
+$anio_seleccionado = date('Y');
 
 // --- LÓGICA PARA ELIMINAR AGUINALDO ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['eliminar_anio'])) {
@@ -26,14 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['eliminar_anio'])) {
     $stmt_delete->close();
 }
 
-
-// Validar que no se pueda generar para un año futuro
-if ($anio_seleccionado > date('Y')) {
-    $mensaje = 'No se pueden generar aguinaldos para años futuros.';
-    $tipoMensaje = 'danger';
-}
-
-// Verificar si ya fue generado al cargar la página
+// Verificar si ya fue generado para el año actual
 $stmt_check = $conn->prepare("SELECT COUNT(*) FROM aguinaldo WHERE periodo = ?");
 $stmt_check->bind_param("i", $anio_seleccionado);
 $stmt_check->execute();
@@ -48,12 +42,12 @@ if ($ya_generado && $_SERVER['REQUEST_METHOD'] != 'POST') {
 }
 
 // Procesar el formulario SOLO si se envía y si no se ha generado ya
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generar']) && !$ya_generado && $anio_seleccionado <= date('Y')) {
-    // Definir el rango de fechas para el cálculo
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generar']) && !$ya_generado) {
+    // Definir el rango de fechas para el cálculo: desde el 1 de diciembre del año anterior al 30 de noviembre del año seleccionado.
     $fecha_inicio = ($anio_seleccionado - 1) . '-12-01';
     $fecha_fin = $anio_seleccionado . '-11-30';
 
-    // Obtener salarios brutos
+    // Obtener la suma de salarios brutos para cada colaborador en el período
     $sql = "SELECT 
                 p.id_colaborador_fk,
                 pers.Nombre,
@@ -82,10 +76,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generar']) && !$ya_gen
     }
     $stmt_salarios->close();
 
-    // Guardar los aguinaldos en la BD
+    // Guardar los aguinaldos calculados en la base de datos
     if (!empty($aguinaldos_a_insertar)) {
         $conn->begin_transaction();
         try {
+            // Eliminar registros previos para el mismo año para evitar duplicados al regenerar
+            $stmt_delete_prev = $conn->prepare("DELETE FROM aguinaldo WHERE periodo = ?");
+            $stmt_delete_prev->bind_param("i", $anio_seleccionado);
+            $stmt_delete_prev->execute();
+            $stmt_delete_prev->close();
+
             $stmt_insert = $conn->prepare("INSERT INTO aguinaldo (id_colaborador_fk, periodo, monto_calculado, monto_pagado, fecha_pago) VALUES (?, ?, ?, 0.00, ?)");
             $fecha_pago_defecto = $anio_seleccionado . '-12-20';
             
@@ -137,8 +137,8 @@ $conn->close();
             <i class="bi bi-calculator-fill text-primary" style="font-size: 4rem; margin-bottom: 1rem;"></i>
             <h2 class="card-title" style="font-weight: 700;">Generar Aguinaldos</h2>
             <p class="text-muted">
-                Selecciona el año para calcular el aguinaldo de todos los colaboradores.
-                El sistema utilizará los salarios desde el 1 de diciembre del año anterior hasta el 30 de noviembre del año seleccionado.
+                Este módulo calculará el aguinaldo para el año en curso (<?php echo $anio_seleccionado; ?>).
+                El sistema utilizará los salarios desde el 1 de diciembre del año anterior hasta el 30 de noviembre actual.
             </p>
         </div>
         
@@ -149,19 +149,15 @@ $conn->close();
         <?php endif; ?>
 
         <form method="POST" action="generar_aguinaldo.php" class="mt-4 border-top pt-4">
-            <div class="row align-items-end">
+            <div class="row align-items-center">
                 <div class="col-md-8">
                     <label for="anio" class="form-label fw-bold">Año a Generar:</label>
-                    <select name="anio" id="anio" class="form-select" onchange="this.form.submit()">
-                        <?php for ($i = date('Y'); $i >= date('Y') - 2; $i--): ?>
-                            <option value="<?= $i ?>" <?= $i == $anio_seleccionado ? 'selected' : '' ?>><?= $i ?></option>
-                        <?php endfor; ?>
-                    </select>
+                    <input type="text" class="form-control" id="anio" name="anio" value="<?= $anio_seleccionado ?>" readonly>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-4 mt-3 mt-md-0 text-center">
                     <button type="submit" name="generar" class="btn btn-primary w-100" <?= $ya_generado ? 'disabled' : '' ?>>
                         <i class="bi bi-play-circle-fill me-2"></i>
-                        <?= $ya_generado ? 'Cálculo ya realizado' : 'Generar' ?>
+                        <?= $ya_generado ? 'Cálculo ya realizado' : 'Generar Aguinaldo ' . $anio_seleccionado ?>
                     </button>
                 </div>
             </div>

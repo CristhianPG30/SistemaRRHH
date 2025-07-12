@@ -16,20 +16,88 @@ $ultimos_salarios = [];
 // --- Lógica de Filtros ---
 $filtro_depto = $_GET['filtro_depto'] ?? '';
 
-// --- Lógica de Eliminación ---
+// --- Lógica de Eliminación (CORREGIDA PARA REACTIVAR AL COLABORADOR) ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
     $idLiquidacion = intval($_POST['delete_id']);
-    $stmt = $conn->prepare("DELETE FROM liquidaciones WHERE idLiquidacion = ?");
-    $stmt->bind_param("i", $idLiquidacion);
-    if ($stmt->execute()) {
-        $msg = "Liquidación eliminada con éxito.";
-        $msg_type = 'success';
-    } else {
-        $msg = "Error al eliminar la liquidación.";
+    
+    $conn->begin_transaction();
+    try {
+        // 1. Obtener el ID del colaborador antes de eliminar la liquidación
+        $stmt_get_colab = $conn->prepare("SELECT id_colaborador_fk FROM liquidaciones WHERE idLiquidacion = ?");
+        $stmt_get_colab->bind_param("i", $idLiquidacion);
+        $stmt_get_colab->execute();
+        $result_colab = $stmt_get_colab->get_result();
+        $colaborador_a_reactivar = $result_colab->fetch_assoc();
+        $stmt_get_colab->close();
+
+        if ($colaborador_a_reactivar) {
+            $id_colaborador_a_reactivar = $colaborador_a_reactivar['id_colaborador_fk'];
+
+            // 2. Eliminar la liquidación
+            $stmt_delete = $conn->prepare("DELETE FROM liquidaciones WHERE idLiquidacion = ?");
+            $stmt_delete->bind_param("i", $idLiquidacion);
+            $stmt_delete->execute();
+            $stmt_delete->close();
+            
+            // 3. Reactivar al colaborador
+            $stmt_reactivate = $conn->prepare("UPDATE colaborador SET activo = 1 WHERE idColaborador = ?");
+            $stmt_reactivate->bind_param("i", $id_colaborador_a_reactivar);
+            $stmt_reactivate->execute();
+            $stmt_reactivate->close();
+            
+            $conn->commit();
+            $msg = "Liquidación eliminada y colaborador reactivado con éxito.";
+            $msg_type = 'success';
+        } else {
+            throw new Exception("No se encontró la liquidación para eliminar.");
+        }
+    } catch (Exception $e) {
+        $conn->rollback();
+        $msg = "Error al revertir la liquidación: " . $e->getMessage();
         $msg_type = 'danger';
     }
-    $stmt->close();
 }
+
+
+// --- Lógica para Guardar la Liquidación ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_liq'])) {
+    $id_colaborador = intval($_POST['colaborador']);
+    $fecha_salida = $_POST['fecha_salida'];
+    $monto_bruto = floatval($_POST['monto_bruto']);
+    $deducciones = floatval($_POST['deducciones']);
+    $monto_neto = floatval($_POST['total']);
+    $motivo = trim($_POST['motivo']);
+    $observaciones = trim($_POST['detalle']);
+
+    if ($id_colaborador > 0) {
+        $conn->begin_transaction();
+        try {
+            // 1. Insertar en la tabla de liquidaciones
+            $stmt_insert = $conn->prepare("INSERT INTO liquidaciones (id_colaborador_fk, fecha_liquidacion, monto_bruto, total_deducciones, monto_neto, motivo, observaciones) VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt_insert->bind_param("isddiss", $id_colaborador, $fecha_salida, $monto_bruto, $deducciones, $monto_neto, $motivo, $observaciones);
+            $stmt_insert->execute();
+            $stmt_insert->close();
+
+            // 2. Desactivar al colaborador en la tabla 'colaborador'
+            $stmt_deactivate = $conn->prepare("UPDATE colaborador SET activo = 0 WHERE idColaborador = ?");
+            $stmt_deactivate->bind_param("i", $id_colaborador);
+            $stmt_deactivate->execute();
+            $stmt_deactivate->close();
+            
+            $conn->commit();
+            $msg = "¡Liquidación guardada y colaborador desactivado con éxito!";
+            $msg_type = 'success';
+        } catch (mysqli_sql_exception $exception) {
+            $conn->rollback();
+            $msg = "Error al procesar la liquidación: " . $exception->getMessage();
+            $msg_type = 'danger';
+        }
+    } else {
+        $msg = "Error: No se seleccionó un colaborador válido.";
+        $msg_type = 'danger';
+    }
+}
+
 
 // Obtener colaboradores y verificar si ya tienen liquidación
 $colaboradores = [];
@@ -39,7 +107,7 @@ $departamentos = $conn->query("SELECT idDepartamento, nombre FROM departamento W
 $sql_colaboradores = "SELECT c.idColaborador, p.Nombre, p.Apellido1, c.id_departamento_fk, c.fecha_ingreso, c.salario_bruto 
                       FROM colaborador c 
                       JOIN persona p ON c.id_persona_fk = p.idPersona 
-                      WHERE 1=1";
+                      WHERE c.activo = 1"; // Solo muestra colaboradores activos para liquidar
 $params = [];
 $types = "";
 if (!empty($filtro_depto)) {
@@ -97,7 +165,6 @@ if (isset($_GET['colaborador']) && !empty($_GET['colaborador'])) {
     }
 }
 
-// (El resto de funciones PHP como calcular_liquidacion_cr, lógica de guardado y eliminación permanecen igual)
 function calcular_liquidacion_cr($salario_promedio, $fecha_ingreso, $fecha_salida, $motivo, $aguinaldo_proporcional) {
     if (!$salario_promedio || empty($fecha_ingreso) || empty($fecha_salida)) return ['dias_laborados' => 0, 'preaviso' => 0, 'cesantia' => 0, 'vacaciones' => 0, 'aguinaldo' => 0, 'desglose_cesantia' => []];
     $dias_laborados = (strtotime($fecha_salida) - strtotime($fecha_ingreso)) / 86400;

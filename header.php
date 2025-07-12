@@ -72,7 +72,7 @@ function rolName($rol) {
         .sidebar-nav { 
             flex-grow: 1; 
             padding: 1rem; 
-            overflow-y: auto; /* Permite scroll si hay muchos enlaces */
+            overflow-y: auto;
         }
         .nav-item .nav-link {
             color: #525f7f; 
@@ -135,67 +135,62 @@ function rolName($rol) {
     <nav class="sidebar-nav">
         <ul class="nav flex-column">
             
-            <?php if ($rol == 1): ?>
+            <?php if ($rol == 1): // Menú Administrador ?>
                 <li class="nav-item"><a class="nav-link <?= isActive(['index_administrador.php']) ? 'active' : '' ?>" href="index_administrador.php"><i class="bi bi-house-door"></i> Inicio</a></li>
-                
                 <li class="nav-heading">Gestión</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['personas.php', 'form_persona.php']) ? 'active' : '' ?>" href="personas.php"><i class="bi bi-people"></i> Personas</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['usuarios.php', 'form_usuario.php']) ? 'active' : '' ?>" href="usuarios.php"><i class="bi bi-person-lock"></i> Usuarios</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['departamentos.php']) ? 'active' : '' ?>" href="departamentos.php"><i class="bi bi-building"></i> Departamentos</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['jerarquias.php']) ? 'active' : '' ?>" href="jerarquias.php"><i class="bi bi-diagram-3"></i> Jerarquías</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['configuración.php']) ? 'active' : '' ?>" href="configuración.php"><i class="bi bi-sliders"></i> Mantenimientos</a></li>
-                
                 <li class="nav-heading">Procesos RRHH</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['nóminas.php']) ? 'active' : '' ?>" href="nóminas.php"><i class="bi bi-calculator"></i> Generar Planilla</a></li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['horasextra.php']) ? 'active' : '' ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</a></li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['permisos.php']) ? 'active' : '' ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobar Permisos</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['gestion_solicitudes.php']) ? 'active' : '' ?>" href="gestion_solicitudes.php"><i class="bi bi-folder-check"></i> Gestión de Solicitudes</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['evaluacion.php']) ? 'active' : '' ?>" href="evaluacion.php"><i class="bi bi-star"></i> Evaluaciones</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['liquidación.php']) ? 'active' : '' ?>" href="liquidación.php"><i class="bi bi-box-arrow-left"></i> Liquidaciones</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['generar_aguinaldo.php']) ? 'active' : '' ?>" href="generar_aguinaldo.php"><i class="bi bi-gift"></i> Generar Aguinaldo</a></li>
-                
                 <li class="nav-heading">Reportes</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['consultas_dinamicas.php']) ? 'active' : '' ?>" href="consultas_dinamicas.php"><i class="bi bi-funnel"></i> Consultas Dinámicas</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['reporte_asistencia.php']) ? 'active' : '' ?>" href="reporte_asistencia.php"><i class="bi bi-calendar3-week"></i> Reporte de Asistencia</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['reporte_global.php']) ? 'active' : '' ?>" href="reporte_global.php"><i class="bi bi-bar-chart-line"></i> Reporte Global</a></li>
             <?php endif; ?>
             
-            <?php if ($rol == 2): // Menú Colaborador CORREGIDO ?>
+            <?php if ($rol == 2): // Menú Colaborador ?>
                 <li class="nav-item"><a class="nav-link <?= isActive(['index_colaborador.php']) ? 'active' : '' ?>" href="index_colaborador.php"><i class="bi bi-house-door"></i> Inicio</a></li>
-                
                 <li class="nav-heading">Mi Información</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['mi_perfil.php']) ? 'active' : '' ?>" href="mi_perfil.php"><i class="bi bi-person-circle"></i> Mi Perfil</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['control_asistencia.php']) ? 'active' : '' ?>" href="control_asistencia.php"><i class="bi bi-calendar-check"></i> Mi Asistencia</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['salario.php']) ? 'active' : '' ?>" href="salario.php"><i class="bi bi-cash-coin"></i> Mis Pagos</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['ver_evaluaciones.php']) ? 'active' : '' ?>" href="ver_evaluaciones.php"><i class="bi bi-star"></i> Mis Evaluaciones</a></li>
-
                 <li class="nav-heading">Mis Solicitudes</li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_vacaciones.php']) ? 'active' : '' ?>" href="solicitud_vacaciones.php"><i class="bi-sun-fill"></i> Solicitar Vacaciones</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_vacaciones.php']) ? 'active' : '' ?>" href="solicitud_vacaciones.php"><i class="bi bi-sun-fill"></i> Solicitar Vacaciones</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_permisos.php']) ? 'active' : '' ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-plus"></i> Solicitar Permiso</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['horas_extra.php']) ? 'active' : '' ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i> Justificar Horas Extra</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_incapacidad.php']) ? 'active' : '' ?>" href="solicitud_incapacidad.php"><i class="bi bi-bandaid"></i> Registrar Incapacidad</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['mis_solicitudes.php']) ? 'active' : '' ?>" href="mis_solicitudes.php"><i class="bi bi-journal-text"></i> Ver Mis Solicitudes</a></li>
             <?php endif; ?>
 
-            <?php if ($rol == 3): ?>
+            <?php if ($rol == 3): // Menú Jefatura ?>
                 <li class="nav-item"><a class="nav-link <?= isActive(['index_jefatura.php']) ? 'active' : '' ?>" href="index_jefatura.php"><i class="bi bi-house-door"></i> Inicio</a></li>
                 <li class="nav-heading">Mi Equipo</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['equipo.php']) ? 'active' : '' ?>" href="equipo.php"><i class="bi bi-people"></i> Ver Equipo</a></li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['permisos.php', 'horasextra.php']) ? 'active' : '' ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobaciones</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['permisos.php']) ? 'active' : '' ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobar Permisos</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['horasextra.php']) ? 'active' : '' ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['evaluacion.php']) ? 'active' : '' ?>" href="evaluacion.php"><i class="bi bi-star"></i> Evaluar Equipo</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['reporte_equipo.php']) ? 'active' : '' ?>" href="reporte_equipo.php"><i class="bi bi-bar-chart-line"></i> Reporte de Equipo</a></li>
             <?php endif; ?>
             
-             <?php if ($rol == 4): // Menú RRHH ?>
+             <?php if ($rol == 4): // Menú RRHH ACTUALIZADO ?>
                 <li class="nav-item"><a class="nav-link <?= isActive('index_rrhh.php') ? 'active' : '' ?>" href="index_rrhh.php"><i class="bi bi-house-door-fill"></i> Inicio</a></li>
                 <li class="nav-heading">Gestión</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['personas.php', 'form_persona.php']) ? 'active' : '' ?>" href="personas.php"><i class="bi bi-people"></i> Empleados</a></li>
                 <li class="nav-heading">Procesos</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['nóminas.php']) ? 'active' : '' ?>" href="nóminas.php"><i class="bi bi-calculator"></i> Planillas</a></li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['permisos.php', 'horasextra.php']) ? 'active' : '' ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Solicitudes</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['gestion_solicitudes.php']) ? 'active' : '' ?>" href="gestion_solicitudes.php"><i class="bi bi-folder-check"></i> Gestión de Solicitudes</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['liquidación.php']) ? 'active' : '' ?>" href="liquidación.php"><i class="bi bi-box-arrow-left"></i> Liquidaciones</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['generar_aguinaldo.php']) ? 'active' : '' ?>" href="generar_aguinaldo.php"><i class="bi bi-gift"></i> Aguinaldos</a></li>
                 <li class="nav-heading">Análisis</li>
-                 <li class="nav-item"><a class="nav-link <?= isActive(['evaluacion.php']) ? 'active' : '' ?>" href="evaluacion.php"><i class="bi bi-star"></i> Evaluaciones</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['evaluacion.php']) ? 'active' : '' ?>" href="evaluacion.php"><i class="bi bi-star"></i> Evaluaciones</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['consultas_dinamicas.php']) ? 'active' : '' ?>" href="consultas_dinamicas.php"><i class="bi bi-funnel"></i> Consultas Dinámicas</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['reporte_global.php']) ? 'active' : '' ?>" href="reporte_global.php"><i class="bi bi-bar-chart-line"></i> Reportes</a></li>
             <?php endif; ?>
