@@ -155,7 +155,7 @@ $conn->close();
                 </a>
             </div>
             <div class="col-md-6 col-lg-3">
-                <a href="aguinaldo.php" class="module-card" style="--icon-color: #f5365c;">
+                <a href="generar_aguinaldo.php" class="module-card" style="--icon-color: #f5365c;">
                     <div class="card"><div class="card-body text-center p-4"><i class="bi bi-gift-fill"></i><h6 class="mt-3">Aguinaldos</h6></div></div>
                 </a>
             </div>
