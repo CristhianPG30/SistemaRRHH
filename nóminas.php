@@ -1,4 +1,4 @@
-<?php  
+<?php
 session_start();
 if (!isset($_SESSION['username']) || !in_array($_SESSION['rol'], [1, 4])) {
     header('Location: login.php');
@@ -8,7 +8,7 @@ include 'db.php';
 
 // --- INICIALIZACIÓN Y LÓGICA DE ACCIONES ---
 $mensaje = '';
-$meses_espanol = [1=>'Enero', 2=>'Febrero', 3=>'Marzo', 4=>'Abril', 5=>'Mayo', 6=>'Junio', 7=>'Julio', 8=>'Agosto', 9=>'Septiembre', 10=>'Octubre', 11=>'Noviembre', 12=>'Diciembre'];
+$meses_espanol = [1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril', 5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto', 9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre'];
 
 $anio_seleccionado = isset($_GET['anio_previsualizar']) ? intval($_GET['anio_previsualizar']) : intval(date('Y'));
 $mes_seleccionado = isset($_GET['mes_previsualizar']) ? intval($_GET['mes_previsualizar']) : intval(date('n'));
@@ -18,19 +18,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_planilla']))
     $mes_eliminar = intval($_POST['mes_eliminar']);
     $fecha_eliminar_str = sprintf("%04d-%02d-01", $anio_eliminar, $mes_eliminar);
     $fecha_generacion_eliminar = date('Y-m-d', strtotime($fecha_eliminar_str));
-    
+
     $conn->begin_transaction();
     try {
         $stmt_deducciones = $conn->prepare("DELETE FROM deducciones_detalle WHERE fecha_generacion_planilla = ?");
         $stmt_deducciones->bind_param("s", $fecha_generacion_eliminar);
         $stmt_deducciones->execute();
         $stmt_deducciones->close();
-        
+
         $stmt_planilla = $conn->prepare("DELETE FROM planillas WHERE fecha_generacion = ?");
         $stmt_planilla->bind_param("s", $fecha_generacion_eliminar);
         $stmt_planilla->execute();
         $stmt_planilla->close();
-        
+
         $conn->commit();
         $mensaje = '<div class="alert alert-success alert-dismissible fade show">La planilla de ' . htmlspecialchars($meses_espanol[$mes_eliminar]) . ' de ' . htmlspecialchars($anio_eliminar) . ' ha sido eliminada.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
     } catch (mysqli_sql_exception $e) {
@@ -40,14 +40,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['eliminar_planilla']))
 }
 
 // --- FUNCIONES DE CÁLCULO ---
-function obtenerDiasFeriados($anio) { 
+function obtenerDiasFeriados($anio)
+{
     $feriadosFilePath = 'js/feriados.json';
     if (!file_exists($feriadosFilePath)) return [];
     $feriados_data = json_decode(file_get_contents($feriadosFilePath), true);
     return is_array($feriados_data) ? array_column($feriados_data, 'fecha') : [];
 }
 
-function calcularDiasLaborales($anio, $mes) {
+function calcularDiasLaborales($anio, $mes)
+{
     $dias_laborales = [];
     $dias_en_mes = cal_days_in_month(CAL_GREGORIAN, $mes, $anio);
     $feriados = obtenerDiasFeriados($anio);
@@ -60,45 +62,84 @@ function calcularDiasLaborales($anio, $mes) {
     return $dias_laborales;
 }
 
-function planillaYaGenerada($anio, $mes, $conn) {
+function planillaYaGenerada($anio, $mes, $conn)
+{
     $stmt = $conn->prepare("SELECT COUNT(*) FROM planillas WHERE YEAR(fecha_generacion) = ? AND MONTH(fecha_generacion) = ?");
-    $stmt->bind_param("ii", $anio, $mes); $stmt->execute();
+    $stmt->bind_param("ii", $anio, $mes);
+    $stmt->execute();
     return $stmt->get_result()->fetch_row()[0] > 0;
 }
 
-function calcularDeduccionesDeLey($salario_bruto, $conn) {
+function calcularDeduccionesDeLey($salario_bruto, $conn)
+{
     $deducciones = ['total' => 0, 'detalles' => []];
     $result = $conn->query("SELECT idTipoDeduccion, Descripcion FROM tipo_deduccion_cat");
-    if ($result) { while ($row = $result->fetch_assoc()) { @list($nombre, $porcentaje) = explode(':', $row['Descripcion']); if (is_numeric(trim($porcentaje))) { $monto = $salario_bruto * (floatval(trim($porcentaje)) / 100); $deducciones['total'] += $monto; $deducciones['detalles'][] = ['id' => $row['idTipoDeduccion'], 'descripcion' => trim($nombre), 'monto' => $monto, 'porcentaje' => floatval(trim($porcentaje))]; } } }
+    if ($result) {
+        while ($row = $result->fetch_assoc()) {
+            @list($nombre, $porcentaje) = explode(':', $row['Descripcion']);
+            if (is_numeric(trim($porcentaje))) {
+                $monto = $salario_bruto * (floatval(trim($porcentaje)) / 100);
+                $deducciones['total'] += $monto;
+                $deducciones['detalles'][] = ['id' => $row['idTipoDeduccion'], 'descripcion' => trim($nombre), 'monto' => $monto, 'porcentaje' => floatval(trim($porcentaje))];
+            }
+        }
+    }
     return $deducciones;
 }
 
-function calcularImpuestoRenta($salario_imponible) {
-    $tax_brackets_path = __DIR__ . "/js/tramos_impuesto_renta.json";
-    if (!file_exists($tax_brackets_path)) return 0;
-    $tax_brackets = json_decode(file_get_contents($tax_brackets_path), true); $impuesto = 0;
-    foreach ($tax_brackets as $tramo) { if ($salario_imponible > $tramo['salario_minimo']) { $monto_en_tramo = ($tramo['salario_maximo'] === null) ? ($salario_imponible - $tramo['salario_minimo']) : (min($salario_imponible, $tramo['salario_maximo']) - $tramo['salario_minimo']); if($monto_en_tramo > 0) $impuesto += $monto_en_tramo * ($tramo['porcentaje'] / 100); } }
-    return max(0, $impuesto);
+// --- CORRECCIÓN #1: Función de Impuesto sobre la Renta actualizada ---
+function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
+{
+    $tax_config_path = __DIR__ . "/js/tramos_impuesto_renta.json";
+    if (!file_exists($tax_config_path)) return 0;
+    
+    $config_data = json_decode(file_get_contents($tax_config_path), true);
+    $tax_brackets = $config_data['tramos'] ?? [];
+    $credito_por_hijo = $config_data['creditos_fiscales']['hijo'] ?? 0;
+    
+    $impuesto_calculado = 0;
+
+    // Recorre los tramos en orden inverso para encontrar el correcto
+    for ($i = count($tax_brackets) - 1; $i >= 0; $i--) {
+        $tramo = $tax_brackets[$i];
+        if ($salario_imponible > $tramo['salario_minimo']) {
+            $excedente = $salario_imponible - $tramo['salario_minimo'];
+            $impuesto_calculado = ($tramo['monto_fijo'] ?? 0) + ($excedente * ($tramo['porcentaje'] / 100));
+            break; 
+        }
+    }
+    
+    $credito_total_hijos = $cantidad_hijos * $credito_por_hijo;
+    $impuesto_final = $impuesto_calculado - $credito_total_hijos;
+    
+    return max(0, $impuesto_final);
 }
 
-function obtenerCategoriasSalariales($conn) {
+function obtenerCategoriasSalariales($conn)
+{
     $result = $conn->query("SELECT idCategoria_salarial, Cantidad_Salarial_Tope FROM categoria_salarial ORDER BY Cantidad_Salarial_Tope ASC");
     return $result ? $result->fetch_all(MYSQLI_ASSOC) : [];
 }
 
-function determinarCategoriaSalarial($salario_bruto, $categorias) {
-    foreach ($categorias as $categoria) { if ($salario_bruto <= $categoria['Cantidad_Salarial_Tope']) return $categoria['idCategoria_salarial']; }
+function determinarCategoriaSalarial($salario_bruto, $categorias)
+{
+    foreach ($categorias as $categoria) {
+        if ($salario_bruto <= $categoria['Cantidad_Salarial_Tope']) return $categoria['idCategoria_salarial'];
+    }
     return !empty($categorias) ? end($categorias)['idCategoria_salarial'] : null;
 }
 
-function obtenerPlanilla($anio, $mes, $conn) {
+function obtenerPlanilla($anio, $mes, $conn)
+{
     $categorias_salariales = obtenerCategoriasSalariales($conn);
     $dias_laborales_del_mes = calcularDiasLaborales($anio, $mes);
     
-    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, c.idColaborador, c.salario_bruto as salario_base 
+    // --- CORRECCIÓN #2: Se añade p.cantidad_hijos a la consulta ---
+    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, p.cantidad_hijos, c.idColaborador, c.salario_bruto as salario_base 
                           FROM colaborador c 
                           JOIN persona p ON c.id_persona_fk = p.idPersona 
                           WHERE c.activo = 1 AND c.idColaborador NOT IN (SELECT id_colaborador_fk FROM liquidaciones)";
+    
     $result_colaboradores = $conn->query($sql_colaboradores);
     if (!$result_colaboradores) return [];
     
@@ -127,7 +168,9 @@ function obtenerPlanilla($anio, $mes, $conn) {
         $stmt_asist->bind_param("iii", $colaborador['idPersona'], $mes, $anio);
         $stmt_asist->execute();
         $res_asist = $stmt_asist->get_result();
-        while($row = $res_asist->fetch_assoc()) { $asistencias_del_mes[] = $row['Fecha']; }
+        while ($row = $res_asist->fetch_assoc()) {
+            $asistencias_del_mes[] = $row['Fecha'];
+        }
         $stmt_asist->close();
 
         $permisos_pagados = [];
@@ -142,7 +185,7 @@ function obtenerPlanilla($anio, $mes, $conn) {
         $stmt_perm->bind_param("i", $idColaborador);
         $stmt_perm->execute();
         $res_perm = $stmt_perm->get_result();
-        while($row = $res_perm->fetch_assoc()) {
+        while ($row = $res_perm->fetch_assoc()) {
             $tipo = $row['tipo_permiso'];
             $es_pagado = in_array(strtolower($tipo), ['vacaciones', 'luto', 'maternidad', 'paternidad', 'día libre', 'incapacidad']);
             
@@ -152,9 +195,11 @@ function obtenerPlanilla($anio, $mes, $conn) {
                     $deduccion_permisos_sin_goce += $horas * $salario_hora;
                 }
             } else {
-                $inicio = new DateTime($row['fecha_inicio']); $fin = new DateTime($row['fecha_fin']); $fin->modify('+1 day');
+                $inicio = new DateTime($row['fecha_inicio']);
+                $fin = new DateTime($row['fecha_fin']);
+                $fin->modify('+1 day');
                 $rango = new DatePeriod($inicio, new DateInterval('P1D'), $fin);
-                foreach($rango as $fecha) {
+                foreach ($rango as $fecha) {
                     if ($fecha->format('n') == $mes) {
                         $fecha_str = $fecha->format('Y-m-d');
                         if ($es_pagado) {
@@ -176,8 +221,10 @@ function obtenerPlanilla($anio, $mes, $conn) {
         $pago_ordinario = $salario_base - $deduccion_por_ausencia;
 
         $stmt_he = $conn->prepare("SELECT SUM(cantidad_horas) AS total_horas FROM horas_extra WHERE estado = 'Aprobada' AND Colaborador_idColaborador = ? AND MONTH(Fecha) = ? AND YEAR(Fecha) = ?");
-        $stmt_he->bind_param("iii", $idColaborador, $mes, $anio); $stmt_he->execute();
-        $total_horas_extra = floatval($stmt_he->get_result()->fetch_assoc()['total_horas'] ?? 0); $stmt_he->close();
+        $stmt_he->bind_param("iii", $idColaborador, $mes, $anio);
+        $stmt_he->execute();
+        $total_horas_extra = floatval($stmt_he->get_result()->fetch_assoc()['total_horas'] ?? 0);
+        $stmt_he->close();
         $pago_horas_extra = $total_horas_extra * (($salario_base / 240) * 1.5);
 
         $salario_bruto_calculado = $pago_ordinario + $pago_horas_extra;
@@ -185,7 +232,7 @@ function obtenerPlanilla($anio, $mes, $conn) {
         
         $deducciones_ley = calcularDeduccionesDeLey($salario_bruto_calculado, $conn);
         $ccss_deduction_amount = 0;
-        foreach($deducciones_ley['detalles'] as $ded) {
+        foreach ($deducciones_ley['detalles'] as $ded) {
             if (stripos($ded['descripcion'], 'CCSS') !== false) {
                 $ccss_deduction_amount = $ded['monto'];
                 break;
@@ -193,10 +240,12 @@ function obtenerPlanilla($anio, $mes, $conn) {
         }
         
         $salario_imponible_renta = $salario_bruto_calculado - $ccss_deduction_amount;
-        $impuesto_renta = calcularImpuestoRenta($salario_imponible_renta);
+        
+        // --- CORRECCIÓN #3: Se pasa la cantidad de hijos al cálculo de renta ---
+        $impuesto_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos']);
 
         $deducciones_ley['detalles'][] = ['id' => 99, 'descripcion' => 'Impuesto sobre la Renta', 'monto' => $impuesto_renta, 'porcentaje' => 0];
-        if($deduccion_permisos_sin_goce > 0){
+        if ($deduccion_permisos_sin_goce > 0) {
             $deducciones_ley['detalles'][] = ['id' => 100, 'descripcion' => 'Deducción por permisos sin goce', 'monto' => $deduccion_permisos_sin_goce, 'porcentaje' => 0];
         }
         
@@ -204,10 +253,10 @@ function obtenerPlanilla($anio, $mes, $conn) {
         $salario_neto = $salario_bruto_calculado - $total_deducciones_final;
         
         $planilla[] = array_merge($colaborador, [
-            'id_categoria_salarial_fk' => $id_categoria, 
+            'id_categoria_salarial_fk' => $id_categoria,
             'salario_bruto_calculado' => $salario_bruto_calculado,
             'salario_imponible_renta' => $salario_imponible_renta,
-            'total_horas_extra' => $total_horas_extra, 
+            'total_horas_extra' => $total_horas_extra,
             'pago_horas_extra' => $pago_horas_extra,
             'dias_pagados' => $numero_dias_a_pagar,
             'dias_ausencia' => $dias_ausencia,
@@ -216,15 +265,16 @@ function obtenerPlanilla($anio, $mes, $conn) {
                 'asistencia' => count($dias_asistencia_efectivos),
                 'permisos' => $permisos_del_mes_por_tipo
             ],
-            'deducciones_detalles' => $deducciones_ley['detalles'], 
-            'total_deducciones' => $total_deducciones_final, 
+            'deducciones_detalles' => $deducciones_ley['detalles'],
+            'total_deducciones' => $total_deducciones_final,
             'salario_neto' => $salario_neto
         ]);
     }
     return $planilla;
 }
 
-function guardarPlanilla($planilla_data, $anio, $mes, $conn) {
+function guardarPlanilla($planilla_data, $anio, $mes, $conn)
+{
     $fecha_generacion = sprintf("%04d-%02d-01", $anio, $mes);
     $conn->begin_transaction();
     try {
@@ -245,11 +295,10 @@ function guardarPlanilla($planilla_data, $anio, $mes, $conn) {
             $stmt_planilla->bind_param("isidddd", $col['idColaborador'], $fecha_generacion, $col['id_categoria_salarial_fk'], $col['salario_bruto_calculado'], $col['pago_horas_extra'], $col['total_deducciones'], $col['salario_neto']);
             $stmt_planilla->execute();
             foreach ($col['deducciones_detalles'] as $deduccion) {
-                // --- CORRECCIÓN: No intentar guardar deducciones que no están en el catálogo ---
                 if ($deduccion['id'] == 99 || $deduccion['id'] == 100) {
                     continue;
                 }
-                if($deduccion['monto'] > 0){
+                if ($deduccion['monto'] > 0) {
                     $stmt_deduccion->bind_param("isid", $col['idColaborador'], $fecha_generacion, $deduccion['id'], $deduccion['monto']);
                     $stmt_deduccion->execute();
                 }
@@ -269,7 +318,7 @@ $ya_fue_generada = planillaYaGenerada($anio_seleccionado, $mes_seleccionado, $co
 $es_mes_actual_para_generar = ($anio_seleccionado == date('Y') && $mes_seleccionado == date('n'));
 $puede_generar = $es_mes_actual_para_generar;
 $mensaje_generar = '';
-if(!$es_mes_actual_para_generar) $mensaje_generar = "Solo se puede generar la planilla del mes actual.";
+if (!$es_mes_actual_para_generar) $mensaje_generar = "Solo se puede generar la planilla del mes actual.";
 
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generar_planilla'])) {
@@ -278,14 +327,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['generar_planilla'])) 
         $anio_a_generar = intval($_POST['anio']);
         $planilla_a_generar = obtenerPlanilla($anio_a_generar, $mes_a_generar, $conn);
 
-        if(guardarPlanilla($planilla_a_generar, $anio_a_generar, $mes_a_generar, $conn)){
+        if (guardarPlanilla($planilla_a_generar, $anio_a_generar, $mes_a_generar, $conn)) {
             $mensaje = '<div class="alert alert-success">Planilla ' . ($ya_fue_generada ? 'regenerada y actualizada' : 'generada y guardada') . ' exitosamente.</div>';
             echo "<meta http-equiv='refresh' content='2'>";
         } else {
             $mensaje = '<div class="alert alert-danger">Error al guardar la planilla en la base de datos.</div>';
         }
     } else {
-        $mensaje = '<div class="alert alert-danger">No se pudo generar esta planilla. '.$mensaje_generar.'</div>';
+        $mensaje = '<div class="alert alert-danger">No se pudo generar esta planilla. ' . $mensaje_generar . '</div>';
     }
 }
 
@@ -294,11 +343,21 @@ $historial_mes = isset($_GET['historial_mes']) ? intval($_GET['historial_mes']) 
 $sql_historial = "SELECT DISTINCT YEAR(fecha_generacion) as anio, MONTH(fecha_generacion) as mes FROM planillas WHERE 1=1";
 $params_historial = [];
 $types_historial = '';
-if ($historial_anio) { $sql_historial .= " AND YEAR(fecha_generacion) = ?"; array_push($params_historial, $historial_anio); $types_historial .= 'i'; }
-if ($historial_mes) { $sql_historial .= " AND MONTH(fecha_generacion) = ?"; array_push($params_historial, $historial_mes); $types_historial .= 'i'; }
+if ($historial_anio) {
+    $sql_historial .= " AND YEAR(fecha_generacion) = ?";
+    array_push($params_historial, $historial_anio);
+    $types_historial .= 'i';
+}
+if ($historial_mes) {
+    $sql_historial .= " AND MONTH(fecha_generacion) = ?";
+    array_push($params_historial, $historial_mes);
+    $types_historial .= 'i';
+}
 $sql_historial .= " ORDER BY anio DESC, mes DESC";
 $stmt_historial = $conn->prepare($sql_historial);
-if (!empty($params_historial)) { $stmt_historial->bind_param($types_historial, ...$params_historial); }
+if (!empty($params_historial)) {
+    $stmt_historial->bind_param($types_historial, ...$params_historial);
+}
 $stmt_historial->execute();
 $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
 ?>
@@ -321,7 +380,7 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
                 <h6 class="m-0 fw-bold text-primary"><i class="bi bi-calendar-month me-2"></i>Cálculo y Generación de Planilla</h6>
                 <form method="GET" class="d-flex gap-2">
                     <select name="mes_previsualizar" class="form-select form-select-sm" onchange="this.form.submit()">
-                        <?php foreach ($meses_espanol as $num => $nombre) echo "<option value='$num' ".($num==$mes_seleccionado ?'selected':'').">$nombre</option>"; ?>
+                        <?php foreach ($meses_espanol as $num => $nombre) echo "<option value='$num' " . ($num == $mes_seleccionado ? 'selected' : '') . ">$nombre</option>"; ?>
                     </select>
                     <input type="number" name="anio_previsualizar" class="form-control form-control-sm" value="<?= $anio_seleccionado ?>" onchange="this.form.submit()">
                 </form>
@@ -345,7 +404,7 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
                 <div class="text-end mt-3">
                     <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#confirmarGeneracionModal"
                             data-ya-generada="<?= $ya_fue_generada ? 'true' : 'false' ?>"
-                            <?= !$puede_generar ? 'disabled title="'.$mensaje_generar.'"' : '' ?>>
+                            <?= !$puede_generar ? 'disabled title="' . $mensaje_generar . '"' : '' ?>>
                         <i class="bi bi-check-circle me-2"></i><?= $ya_fue_generada ? 'Regenerar Planilla' : 'Generar y Guardar Planilla' ?>
                     </button>
                 </div>
@@ -356,7 +415,7 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
             <div class="card-body">
                 <form method="GET" class="mb-4">
                     <div class="row align-items-end">
-                        <div class="col-md-5 mb-3"><label class="form-label">Filtrar Mes:</label><select name="historial_mes" class="form-select"><option value="">Todos los meses</option><?php foreach ($meses_espanol as $num => $nombre) echo "<option value='$num' ".($num==$historial_mes ?'selected':'').">$nombre</option>"; ?></select></div>
+                        <div class="col-md-5 mb-3"><label class="form-label">Filtrar Mes:</label><select name="historial_mes" class="form-select"><option value="">Todos los meses</option><?php foreach ($meses_espanol as $num => $nombre) echo "<option value='$num' " . ($num == $historial_mes ? 'selected' : '') . ">$nombre</option>"; ?></select></div>
                         <div class="col-md-5 mb-3"><label class="form-label">Filtrar Año:</label><input type="number" name="historial_anio" class="form-control" placeholder="Ej: 2025" value="<?= htmlspecialchars($historial_anio) ?>"></div>
                         <div class="col-md-2 mb-3"><button type="submit" class="btn btn-info w-100"><i class="bi bi-search"></i></button></div>
                     </div>

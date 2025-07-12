@@ -10,7 +10,7 @@ $persona_id = $_SESSION['persona_id'] ?? 0;
 $mensaje = '';
 $mensaje_tipo = '';
 
-// --- INICIO: FUNCIONES DE CÁLCULO MEJORADAS ---
+// --- FUNCIONES DE CÁLCULO ---
 function obtenerDiasFeriados() {
     $feriadosFilePath = 'js/feriados.json';
     if (!file_exists($feriadosFilePath)) return [];
@@ -22,16 +22,9 @@ function calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin) {
     if (empty($fecha_inicio) || empty($fecha_fin)) return 0;
     $dias_laborales = 0;
     $feriados = obtenerDiasFeriados();
-    
     try {
-        $periodo = new DatePeriod(
-            new DateTime($fecha_inicio),
-            new DateInterval('P1D'),
-            (new DateTime($fecha_fin))->modify('+1 day')
-        );
-
+        $periodo = new DatePeriod(new DateTime($fecha_inicio), new DateInterval('P1D'), (new DateTime($fecha_fin))->modify('+1 day'));
         foreach ($periodo as $fecha) {
-            // No contar sábados (6) ni domingos (7)
             if ($fecha->format('N') < 6 && !in_array($fecha->format('Y-m-d'), $feriados)) {
                 $dias_laborales++;
             }
@@ -41,8 +34,6 @@ function calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin) {
     }
     return $dias_laborales;
 }
-// --- FIN: FUNCIONES DE CÁLCULO MEJORADAS ---
-
 
 // Traer idColaborador y fecha ingreso
 $idColaborador = 0;
@@ -70,11 +61,12 @@ $dias_acumulados = floor($meses_laborados * 1); // 1 día por mes
 
 $dias_tomados = 0;
 if ($idColaborador > 0) {
-    $sql_tomados = "SELECT SUM(DATEDIFF(fecha_fin, fecha_inicio) + 1) as total
+    // --- CORRECCIÓN: Usar dias_habiles para el cálculo ---
+    $sql_tomados = "SELECT SUM(dias_habiles) as total
     FROM permisos 
     WHERE id_colaborador_fk = ? 
       AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'vacaciones')
-      AND id_estado_fk = 4"; // Estado Aprobado
+      AND id_estado_fk = (SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion) = 'aprobado')";
     $stmt_tomados = $conn->prepare($sql_tomados);
     $stmt_tomados->bind_param("i", $idColaborador);
     $stmt_tomados->execute();
@@ -96,78 +88,76 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
 
     $resultEstado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion)='pendiente' LIMIT 1");
     $idEstadoPendiente = $resultEstado->fetch_assoc()['idEstado'] ?? 3;
+    
+    $resultEstadoRechazado = $conn->query("SELECT idEstado FROM estado_cat WHERE LOWER(Descripcion)='rechazado' LIMIT 1");
+    $idEstadoRechazado = $resultEstadoRechazado->fetch_assoc()['idEstado'] ?? 5;
 
     $dias_solicitados_laborales = calcularDiasLaboralesSolicitados($fecha_inicio, $fecha_fin);
 
     if (empty($fecha_inicio) || empty($fecha_fin)) {
         $mensaje = "Debes seleccionar una fecha de inicio y de fin.";
-        $tipoMensaje = 'warning';
+        $mensaje_tipo = 'warning';
     } elseif ($fecha_fin < $fecha_inicio) {
         $mensaje = "La fecha de fin no puede ser anterior a la de inicio.";
-        $tipoMensaje = 'danger';
+        $mensaje_tipo = 'danger';
     } elseif ($dias_solicitados_laborales <= 0) {
         $mensaje = "Las fechas seleccionadas no contienen días laborales válidos.";
-        $tipoMensaje = 'danger';
+        $mensaje_tipo = 'danger';
     } elseif ($dias_solicitados_laborales > $dias_disponibles) {
-        $mensaje = "No tienes suficientes días disponibles para esta solicitud ($dias_solicitados_laborales días solicitados vs $dias_disponibles disponibles).";
-        $tipoMensaje = 'danger';
+        $mensaje = "No tienes suficientes días disponibles ($dias_solicitados_laborales solicitados vs $dias_disponibles disponibles).";
+        $mensaje_tipo = 'danger';
     } elseif ($idColaborador > 0) {
-        // --- INICIO DE LA CORRECCIÓN ---
-        // 1. Revisa si ya existe una solicitud RECHAZADA en la fecha de inicio
-        $stmt_check_rechazada = $conn->prepare("SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND fecha_inicio = ? AND id_estado_fk = 5 LIMIT 1");
-        $stmt_check_rechazada->bind_param("is", $idColaborador, $fecha_inicio);
-        $stmt_check_rechazada->execute();
-        $stmt_check_rechazada->store_result();
         
-        if ($stmt_check_rechazada->num_rows > 0) {
-            // Si existe una rechazada, la ACTUALIZA para reutilizarla
-            $stmt_update = $conn->prepare("UPDATE permisos SET id_estado_fk = ?, fecha_fin = ?, motivo = ?, fecha_solicitud = NOW(), observaciones = '' WHERE id_colaborador_fk = ? AND fecha_inicio = ? AND id_estado_fk = 5");
-            $stmt_update->bind_param("issis", $idEstadoPendiente, $fecha_fin, $motivo, $idColaborador, $fecha_inicio);
-            if ($stmt_update->execute()) {
-                $mensaje = "¡Solicitud de vacaciones reenviada correctamente!";
-                $mensaje_tipo = 'success';
+        // --- INICIO DE LA CORRECCIÓN: Consulta de cruce de fechas mejorada ---
+        $check_sql = "SELECT tpc.Descripcion AS tipo_permiso 
+                      FROM permisos p
+                      JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
+                      WHERE p.id_colaborador_fk = ? AND p.id_estado_fk != ? 
+                      AND ? <= p.fecha_fin AND ? >= p.fecha_inicio
+                      LIMIT 1";
+        $check_stmt = $conn->prepare($check_sql);
+        $check_stmt->bind_param("iiss", $idColaborador, $idEstadoRechazado, $fecha_inicio, $fecha_fin);
+        $check_stmt->execute();
+        $result_check = $check_stmt->get_result();
+        
+        if ($result_check->num_rows > 0) {
+            $conflicto = $result_check->fetch_assoc();
+            $tipo_conflicto = strtolower($conflicto['tipo_permiso']);
+            // Se crea un mensaje específico y se usa la variable correcta ($mensaje_tipo)
+            $mensaje = "Ya tienes una solicitud de '{$tipo_conflicto}' que se cruza con estas fechas.";
+            $mensaje_tipo = 'danger';
+        } else {
+            // Si no hay conflictos, se procede a insertar una nueva solicitud
+            $stmt_insert = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, dias_habiles) VALUES (?, ?, ?, NOW(), ?, ?, ?, ?)");
+            $stmt_insert->bind_param("iiisssi", $idColaborador, $idTipoPermiso, $idEstadoPendiente, $fecha_inicio, $fecha_fin, $motivo, $dias_solicitados_laborales);
+            if ($stmt_insert->execute()) {
+                // Se usa una sesión para mostrar el mensaje después de redirigir
+                $_SESSION['flash_message'] = ['tipo' => 'success', 'mensaje' => '¡Solicitud de vacaciones enviada correctamente!'];
+                header("Location: " . $_SERVER['PHP_SELF']);
+                exit();
             } else {
-                $mensaje = "Error al reenviar la solicitud: " . $conn->error;
+                $mensaje = "Error al registrar la solicitud: " . $conn->error;
                 $mensaje_tipo = 'danger';
             }
-            $stmt_update->close();
-        } else {
-            // Si no hay rechazada, revisa si hay pendientes o aprobadas
-            $check_sql = "SELECT id_colaborador_fk FROM permisos WHERE id_colaborador_fk = ? AND id_estado_fk != 5 AND ? <= fecha_fin AND ? >= fecha_inicio";
-            $check_stmt = $conn->prepare($check_sql);
-            $check_stmt->bind_param("iss", $idColaborador, $fecha_inicio, $fecha_fin);
-            $check_stmt->execute();
-            $check_stmt->store_result();
-
-            if ($check_stmt->num_rows > 0) {
-                $mensaje = "Ya tienes una solicitud que se cruza con las fechas seleccionadas. Revisa tus solicitudes pendientes o aprobadas.";
-                $tipoMensaje = 'danger';
-            } else {
-                // Si no hay conflictos, INSERTA una nueva solicitud
-                $stmt_insert = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo) VALUES (?, ?, ?, NOW(), ?, ?, ?)");
-                $stmt_insert->bind_param("iiisss", $idColaborador, $idTipoPermiso, $idEstadoPendiente, $fecha_inicio, $fecha_fin, $motivo);
-                if ($stmt_insert->execute()) {
-                    $mensaje = "¡Solicitud de vacaciones enviada correctamente!";
-                    $mensaje_tipo = 'success';
-                    header("Location: " . $_SERVER['PHP_SELF']);
-                    exit();
-                } else {
-                    $mensaje = "Error al registrar la solicitud: " . $conn->error;
-                    $mensaje_tipo = 'danger';
-                }
-                $stmt_insert->close();
-            }
-            $check_stmt->close();
+            $stmt_insert->close();
         }
-        $stmt_check_rechazada->close();
+        $check_stmt->close();
         // --- FIN DE LA CORRECCIÓN ---
     }
 }
 
+// Manejo de mensajes flash para mostrar después de una redirección
+if(isset($_SESSION['flash_message'])){
+    $mensaje = $_SESSION['flash_message']['mensaje'];
+    $mensaje_tipo = $_SESSION['flash_message']['tipo'];
+    unset($_SESSION['flash_message']);
+}
+
 $solicitudes = [];
 if ($idColaborador > 0) {
+    // --- CORRECCIÓN: Usar dias_habiles para el historial ---
     $stmt_historial = $conn->prepare("
-    SELECT p.fecha_inicio, p.fecha_fin, DATEDIFF(p.fecha_fin, p.fecha_inicio) + 1 as dias_solicitados, ec.Descripcion AS estado, p.observaciones, p.motivo
+    SELECT p.fecha_inicio, p.fecha_fin, p.dias_habiles as dias_solicitados, ec.Descripcion AS estado, p.observaciones, p.motivo
     FROM permisos p
     JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
     JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
@@ -195,85 +185,25 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
     <style>
-        body {
-            background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important;
-            font-family: 'Poppins', sans-serif;
-        }
-        .main-container {
-            max-width: 1200px;
-            margin: 48px auto 0;
-            padding: 0 15px;
-        }
-        .main-card {
-            background: #fff;
-            border-radius: 2.1rem;
-            box-shadow: 0 8px 38px 0 rgba(44,62,80,.12);
-            padding: 2.2rem 2.1rem 1.7rem 2.1rem;
-            margin-bottom: 2.2rem;
-            animation: fadeInDown 0.9s;
-        }
-        .card-title-custom {
-            font-size: 2.2rem;
-            font-weight: 900;
-            color: #1a3961;
-            letter-spacing: .7px;
-            margin-bottom: 0.5rem;
-            display: flex;
-            align-items: center;
-            gap: .8rem;
-        }
+        body { background: linear-gradient(135deg, #eaf6ff 0%, #f4f7fc 100%) !important; font-family: 'Poppins', sans-serif; }
+        .main-container { max-width: 1200px; margin: 48px auto 0; padding: 0 15px; }
+        .main-card { background: #fff; border-radius: 2.1rem; box-shadow: 0 8px 38px 0 rgba(44,62,80,.12); padding: 2.2rem 2.1rem 1.7rem 2.1rem; margin-bottom: 2.2rem; animation: fadeInDown 0.9s; }
+        .card-title-custom { font-size: 2.2rem; font-weight: 900; color: #1a3961; letter-spacing: .7px; margin-bottom: 0.5rem; display: flex; align-items: center; gap: .8rem; }
         .card-title-custom i { color: #3499ea; font-size: 2.2rem; }
         .card-title-custom .info-icon { font-size: 1.2rem; color: #3498db; cursor: pointer; }
         .text-center { color: #3a6389; }
         .form-label { color: #288cc8; font-weight: 600; }
         .form-control, input[type="date"] { border-radius: 0.9rem; }
-        .btn-submit-custom {
-            background: linear-gradient(90deg, #1f8ff7 75%, #53e3fc 100%);
-            color: #fff;
-            font-weight: 700;
-            font-size: 1.05rem;
-            border-radius: 0.8rem;
-            padding: .63rem 1.5rem;
-            box-shadow: 0 2px 12px #1f8ff722;
-            width: 100%;
-            margin-top: 1rem;
-        }
+        .btn-submit-custom { background: linear-gradient(90deg, #1f8ff7 75%, #53e3fc 100%); color: #fff; font-weight: 700; font-size: 1.05rem; border-radius: 0.8rem; padding: .63rem 1.5rem; box-shadow: 0 2px 12px #1f8ff722; width: 100%; margin-top: 1rem; border: none;}
         .btn-submit-custom:hover { background: linear-gradient(90deg, #53e3fc 25%, #1f8ff7 100%); color: #fff; }
-        .table-custom {
-            background: #f8fafd;
-            border-radius: 1.15rem;
-            overflow: hidden;
-            box-shadow: 0 4px 24px #23b6ff10;
-        }
-        .table-custom th {
-            background: #e9f6ff;
-            color: #288cc8;
-            font-weight: 700;
-            font-size: 1.1rem;
-        }
-        .table-custom td, .table-custom th {
-            padding: 0.75rem 0.7rem;
-            text-align: center;
-            vertical-align: middle;
-        }
-        .badge-disponibles {
-            background: linear-gradient(90deg, #01b87f 60%, #53e3fc 100%);
-            color: #fff;
-            font-size: 1.1rem;
-            padding: .6rem 1.1rem;
-            border-radius: .9rem;
-            font-weight: 600;
-        }
+        .table-custom { background: #f8fafd; border-radius: 1.15rem; overflow: hidden; box-shadow: 0 4px 24px #23b6ff10; }
+        .table-custom th { background: #e9f6ff; color: #288cc8; font-weight: 700; font-size: 1.1rem; }
+        .table-custom td, .table-custom th { padding: 0.75rem 0.7rem; text-align: center; vertical-align: middle; }
+        .badge-disponibles { background: linear-gradient(90deg, #01b87f 60%, #53e3fc 100%); color: #fff; font-size: 1.1rem; padding: .6rem 1.1rem; border-radius: .9rem; font-weight: 600; }
         .badge.bg-warning { background-color: #ffd237 !important; color: #6a4d00 !important; }
         .badge.bg-success { background-color: #01b87f !important; }
         .badge.bg-danger { background-color: #ff6565 !important; }
-        .section-title {
-            font-weight: 700;
-            color: #1a3961;
-            font-size: 1.4rem;
-            margin-bottom: 1rem;
-            text-align: center;
-        }
+        .section-title { font-weight: 700; color: #1a3961; font-size: 1.4rem; margin-bottom: 1rem; text-align: center; }
         .calendar { width: 100%; border: 1px solid #dee2e6; border-radius: 1rem; overflow: hidden; }
         .calendar-header { text-align: center; padding: 10px; background: #5e72e4; color: white; font-weight: bold; }
         .calendar-body { display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background-color: #dee2e6; }
@@ -334,7 +264,7 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
                 </form>
 
                 <?php if ($mensaje): 
-                    $icon_class = 'bi-info-circle-fill'; // default
+                    $icon_class = 'bi-info-circle-fill'; 
                     if ($mensaje_tipo == 'success') {
                         $icon_class = 'bi-check-circle-fill';
                     } elseif ($mensaje_tipo == 'danger' || $mensaje_tipo == 'warning') {
@@ -365,7 +295,7 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
                     <tr>
                         <th>Inicio</th>
                         <th>Fin</th>
-                        <th>Días</th>
+                        <th>Días Hábiles</th>
                         <th>Estado</th>
                         <th>Motivo</th>
                     </tr>
@@ -399,6 +329,7 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // El resto del JavaScript no necesita cambios
         const fechaInicioInput = document.getElementById('fecha_inicio');
         const fechaFinInput = document.getElementById('fecha_fin');
         

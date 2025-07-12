@@ -2,7 +2,7 @@
 session_start();
 include 'db.php'; // Conexión a la base de datos
 
-// --- CORRECCIÓN: Permitir acceso a Administrador (1) y Recursos Humanos (4) ---
+// --- Permitir acceso a Administrador (1) y Recursos Humanos (4) ---
 if (!isset($_SESSION['username']) || !in_array($_SESSION['rol'], [1, 4])) {
     header('Location: login.php');
     exit;
@@ -156,12 +156,23 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                         </thead>
                         <tbody>
                             <?php 
-                            // OBTENER PERSONAS DENTRO DEL PHP PARA RENDERIZADO INICIAL
-                            $sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula, d.nombre AS Departamento, c.activo AS Estado
-                                    FROM persona p
+                            // --- INICIO DE LA CORRECCIÓN: Consulta SQL modificada ---
+                            $sql = "SELECT
+                                        p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula,
+                                        d.nombre AS Departamento,
+                                        c.activo,
+                                        CASE
+                                            WHEN c.activo = 0 THEN 'Inactivo'
+                                            WHEN c.fecha_ingreso > CURDATE() THEN 'Pendiente'
+                                            ELSE 'Activo'
+                                        END AS EstadoCalculado
+                                    FROM
+                                        persona p
                                     LEFT JOIN colaborador c ON p.idPersona = c.id_persona_fk
                                     LEFT JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
                                     ORDER BY p.Nombre, p.Apellido1";
+                            // --- FIN DE LA CORRECCIÓN ---
+
                             $result_personas = $conn->query($sql);
                             if ($result_personas->num_rows > 0): 
                                 while ($row = $result_personas->fetch_assoc()): ?>
@@ -179,13 +190,24 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                                         </td>
                                         <td><?= htmlspecialchars($row['Departamento'] ?? 'No asignado'); ?></td>
                                         <td class="text-center">
-                                            <span class="badge rounded-pill <?= $row['Estado'] ? 'bg-success-subtle text-success-emphasis' : 'bg-danger-subtle text-danger-emphasis'; ?> status-badge">
-                                                <?= $row['Estado'] ? 'Activo' : 'Inactivo'; ?>
+                                            <?php
+                                            $estado = htmlspecialchars($row['EstadoCalculado']);
+                                            $clase_badge = 'bg-secondary'; // Color por defecto
+                                            if ($estado == 'Activo') {
+                                                $clase_badge = 'bg-success';
+                                            } elseif ($estado == 'Inactivo') {
+                                                $clase_badge = 'bg-danger';
+                                            } elseif ($estado == 'Pendiente') {
+                                                $clase_badge = 'bg-warning text-dark';
+                                            }
+                                            ?>
+                                            <span class="badge rounded-pill <?= $clase_badge; ?> status-badge">
+                                                <?= $estado; ?>
                                             </span>
-                                        </td>
+                                            </td>
                                         <td class="text-center">
                                             <a href="form_persona.php?id=<?= $row['idPersona']; ?>" class="btn btn-light btn-sm btn-action" title="Editar"><i class="bi bi-pencil-square text-primary"></i></a>
-                                            <a href="personas.php?toggle_id=<?= $row['idPersona']; ?>" class="btn btn-light btn-sm btn-action" title="<?= $row['Estado'] ? 'Desactivar' : 'Activar'; ?>"><i class="bi <?= $row['Estado'] ? 'bi-toggle-on text-success' : 'bi-toggle-off text-muted'; ?>" style="font-size: 1.2rem;"></i></a>
+                                            <a href="personas.php?toggle_id=<?= $row['idPersona']; ?>" class="btn btn-light btn-sm btn-action" title="<?= $row['activo'] ? 'Desactivar' : 'Activar'; ?>"><i class="bi <?= $row['activo'] ? 'bi-toggle-on text-success' : 'bi-toggle-off text-muted'; ?>" style="font-size: 1.2rem;"></i></a>
                                             <button type="button" class="btn btn-light btn-sm btn-action" title="Eliminar" onclick="confirmDelete(<?= $row['idPersona']; ?>, '<?= htmlspecialchars($row['Nombre'] . " " . $row['Apellido1']); ?>')"><i class="bi bi-trash text-danger"></i></button>
                                         </td>
                                     </tr>

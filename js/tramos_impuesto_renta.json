@@ -1,27 +1,33 @@
-[
+{
+  "creditos_fiscales": {
+    "conyuge": 2600,
+    "hijo": 1720
+  },
+  "tramos": [
     {
-        "salario_minimo": 0,
-        "salario_maximo": 941000,
-        "porcentaje": 0
+      "salario_minimo": 0,
+      "porcentaje": 0,
+      "monto_fijo": 0
     },
     {
-        "salario_minimo": 941000,
-        "salario_maximo": 1381000,
-        "porcentaje": 10
+      "salario_minimo": 922000,
+      "porcentaje": 10,
+      "monto_fijo": 0
     },
     {
-        "salario_minimo": 1381000,
-        "salario_maximo": 2423000,
-        "porcentaje": 15
+      "salario_minimo": 1352000,
+      "porcentaje": 15,
+      "monto_fijo": 43000
     },
     {
-        "salario_minimo": 2423000,
-        "salario_maximo": 4845000,
-        "porcentaje": 20
+      "salario_minimo": 2373000,
+      "porcentaje": 20,
+      "monto_fijo": 196150
     },
     {
-        "salario_minimo": 4845000,
-        "salario_maximo": null,
-        "porcentaje": 25
+      "salario_minimo": 4745000,
+      "porcentaje": 25,
+      "monto_fijo": 670550
     }
-]
+  ]
+}

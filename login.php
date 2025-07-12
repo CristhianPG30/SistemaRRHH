@@ -1,5 +1,5 @@
 <?php 
-session_start(['cookie_httponly' => true, 'cookie_secure' => false, 'cookie_samesite' => 'Strict']);
+session_start(['cookie_httponly' => true, 'cookie_secure' => true, 'cookie_samesite' => 'Strict']);
 include 'db.php';
 $errorMessage = '';
 
@@ -7,20 +7,27 @@ function sanitize_input($data) {
     return htmlspecialchars(stripslashes(trim($data)));
 }
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // DEBUG OPCIONAL: descomenta para ver los datos recibidos del formulario
-    // echo "<pre>"; print_r($_POST); echo "</pre>";
+// Si se recibe un error por GET (desde la redirección), se muestra.
+if (isset($_GET['error'])) {
+    $errorMessage = sanitize_input($_GET['error']);
+}
 
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $username = sanitize_input($_POST['username'] ?? '');
     $password = trim($_POST['password'] ?? '');
 
     if (empty($username) || empty($password)) {
         $errorMessage = "Por favor, ingresa tu usuario y contraseña.";
     } else {
-        $sql = "SELECT u.idUsuario, u.username, u.password, u.id_rol_fk, u.id_persona_fk, c.idColaborador, c.activo 
+        // --- INICIO DE LA CORRECCIÓN: Consulta SQL modificada ---
+        $sql = "SELECT 
+                    u.idUsuario, u.username, u.password, u.id_rol_fk, u.id_persona_fk, 
+                    c.idColaborador, c.activo, c.fecha_ingreso 
                 FROM usuario u 
                 LEFT JOIN colaborador c ON u.id_persona_fk = c.id_persona_fk 
                 WHERE BINARY u.username = ?";
+        // --- FIN DE LA CORRECCIÓN ---
+
         $stmt = $conn->prepare($sql);
         if ($stmt) {
             $stmt->bind_param("s", $username);
@@ -29,17 +36,34 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if ($result->num_rows === 1) {
                 $user = $result->fetch_assoc();
 
-                // Debug opcional para verificar los datos recuperados y el hash
-                // echo "<pre>"; print_r($user); echo "</pre>";
-                // echo password_hash('123', PASSWORD_DEFAULT); // genera el hash para comparar
-
                 if (password_verify($password, $user['password'])) {
-                    if ($user['activo'] == 1 || is_null($user['activo'])) {
+                    
+                    // --- INICIO DE LA CORRECCIÓN: Lógica de validación de estado y fecha ---
+                    
+                    // Condición 1: El usuario es un colaborador (tiene registro en la tabla `colaborador`)
+                    if (isset($user['activo'])) {
+                        // 1.1 Verificar si la cuenta está desactivada
+                        if ($user['activo'] == 0) {
+                            $errorMessage = "Tu cuenta ha sido desactivada.";
+                        }
+                        // 1.2 Verificar si la fecha de ingreso es futura
+                        elseif ($user['fecha_ingreso'] && new DateTime($user['fecha_ingreso']) > new DateTime()) {
+                            $fecha_formateada = date('d/m/Y', strtotime($user['fecha_ingreso']));
+                            $errorMessage = "Tu cuenta estará activa a partir del " . $fecha_formateada . ".";
+                        }
+                    }
+                    // Si no es un colaborador (ej. admin puro sin registro en `colaborador`) o si pasa las validaciones, puede continuar.
+                    // --- FIN DE LA CORRECCIÓN ---
+
+                    // Si después de las validaciones no hay mensaje de error, procede a iniciar sesión
+                    if (empty($errorMessage)) {
                         session_regenerate_id(true);
                         $_SESSION['username'] = $user['username'];
                         $_SESSION['rol'] = (int)$user['id_rol_fk'];
                         $_SESSION['persona_id'] = $user['id_persona_fk'];
                         if (!empty($user['idColaborador'])) $_SESSION['colaborador_id'] = $user['idColaborador'];
+                        
+                        // Redirección según el rol
                         switch ($_SESSION['rol']) {
                             case 1: header("Location: index_administrador.php"); break;
                             case 2: header("Location: index_colaborador.php"); break;
@@ -48,9 +72,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                             default: $errorMessage = "Rol de usuario no reconocido."; break;
                         }
                         exit();
-                    } else {
-                        $errorMessage = "Tu cuenta ha sido desactivada.";
                     }
+                    // Si hay un errorMessage, el script continuará y lo mostrará en el formulario.
+
                 } else {
                     $errorMessage = "Usuario o contraseña incorrectos.";
                 }
@@ -62,7 +86,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $errorMessage = "Error interno del sistema.";
         }
     }
-    $conn->close();
 }
 ?>
 <!DOCTYPE html>
