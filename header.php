@@ -173,7 +173,7 @@ function rolName($rol) {
             <?php if ($rol == 3): // Menú Jefatura ?>
                 <li class="nav-item"><a class="nav-link <?= isActive(['index_colaborador.php']) ? 'active' : '' ?>" href="index_colaborador.php"><i class="bi bi-house-door"></i> Inicio</a></li>
                 <li class="nav-heading">Mi Equipo</li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['equipo.php']) ? 'active' : '' ?>" href="equipo.php"><i class="bi bi-people"></i> Ver Equipo</a></li>
+               
                 <li class="nav-item"><a class="nav-link <?= isActive(['permisos.php']) ? 'active' : '' ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobar Permisos</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['horasextra.php']) ? 'active' : '' ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['evaluacion.php']) ? 'active' : '' ?>" href="evaluacion.php"><i class="bi bi-star"></i> Evaluar Equipo</a></li>
@@ -184,7 +184,7 @@ function rolName($rol) {
                 <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_permisos.php']) ? 'active' : '' ?>" href="solicitud_permisos.php"><i class="bi bi-calendar-plus"></i> Solicitar Permiso</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['horas_extra.php']) ? 'active' : '' ?>" href="horas_extra.php"><i class="bi bi-clock-history"></i> Justificar Horas Extra</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['solicitud_incapacidad.php']) ? 'active' : '' ?>" href="solicitud_incapacidad.php"><i class="bi bi-bandaid"></i> Registrar Incapacidad</a></li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['mis_solicitudes.php']) ? 'active' : '' ?>" href="mis_solicitudes.php"><i class="bi bi-journal-text"></i> Ver Mis Solicitudes</a></li>
+                
             <?php endif; ?>
             
              <?php if ($rol == 4): // Menú RRHH ACTUALIZADO ?>

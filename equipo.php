@@ -7,24 +7,84 @@ if (!isset($_SESSION['username']) || !isset($_SESSION['colaborador_id'])) {
     exit;
 }
 
-$colaborador_id = $_SESSION['colaborador_id'];
+$jefe_id = $_SESSION['colaborador_id'];
 
-$sql = "SELECT CONCAT(p.Nombre, ' ', p.Apellido1, ' ', p.Apellido2) AS nombre,
-               d.nombre AS departamento,
-               c.fecha_ingreso,
-               c.salario_bruto,
-               CONCAT(jp.Nombre, ' ', jp.Apellido1, ' ', jp.Apellido2) AS jefe
+// --- CONSULTA MEJORADA ---
+// Obtenemos todos los colaboradores activos para construir el organigrama.
+// Esto soluciona el problema de "no tienes equipo" si eres un jefe de alto nivel.
+$sql = "SELECT 
+            c.idColaborador,
+            CONCAT(p.Nombre, ' ', p.Apellido1) AS nombre,
+            d.nombre as departamento,
+            c.id_jefe_fk,
+            p.Nombre as nombre_pila,
+            p.Apellido1 as apellido1
         FROM colaborador c
         JOIN persona p ON c.id_persona_fk = p.idPersona
         JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
-        LEFT JOIN colaborador jc ON c.id_jefe_fk = jc.idColaborador
-        LEFT JOIN persona jp ON jc.id_persona_fk = jp.idPersona
-        WHERE c.id_jefe_fk = ?";
+        WHERE c.activo = 1";
 
-$stmt = $conn->prepare($sql);
-$stmt->bind_param('i', $colaborador_id);
-$stmt->execute();
-$result = $stmt->get_result();
+$result = $conn->query($sql);
+$colaboradores = $result->fetch_all(MYSQLI_ASSOC);
+
+// Función para generar avatares con iniciales
+function generate_avatar_html($nombre, $apellido) {
+    $iniciales = mb_substr($nombre, 0, 1) . mb_substr($apellido, 0, 1);
+    $hash = md5($iniciales);
+    $r = hexdec(substr($hash,0,2));
+    $g = hexdec(substr($hash,2,2));
+    $b = hexdec(substr($hash,4,2));
+    $r = min(255, $r + 50); $g = min(255, $g + 50); $b = min(255, $b + 50);
+
+    // Usamos addslashes para escapar las comillas para el string de JavaScript
+    return addslashes("<div class='org-avatar' style='background-color:rgb($r,$g,$b)'>$iniciales</div>");
+}
+
+// Preparar datos para el organigrama de Google Charts
+$org_data = [];
+$team_members_count = 0;
+// Buscamos al jefe actual para que sea la raíz del organigrama
+foreach($colaboradores as $col) {
+    if ($col['idColaborador'] == $jefe_id) {
+        $jefe_html_node = generate_avatar_html($col['nombre_pila'], $col['apellido1']) . "<div class='org-name'>{$col['nombre']}</div><div class='org-dept'>{$col['departamento']}</div>";
+        // La raíz del organigrama no tiene padre (segundo elemento es '')
+        $org_data[] = [['v' => (string)$col['idColaborador'], 'f' => $jefe_html_node], '', $col['nombre']];
+        break;
+    }
+}
+
+// Función recursiva para encontrar y agregar todos los subordinados
+function find_subordinates(&$org_data, $colaboradores, $manager_id) {
+    global $team_members_count;
+    foreach ($colaboradores as $col) {
+        if ($col['id_jefe_fk'] == $manager_id) {
+            $team_members_count++;
+            $html_node = generate_avatar_html($col['nombre_pila'], $col['apellido1']) . "<div class='org-name'>{$col['nombre']}</div><div class='org-dept'>{$col['departamento']}</div>";
+            $org_data[] = [['v' => (string)$col['idColaborador'], 'f' => $html_node], (string)$manager_id, $col['nombre']];
+            // Llamada recursiva para encontrar los subordinados de este subordinado
+            find_subordinates($org_data, $colaboradores, $col['idColaborador']);
+        }
+    }
+}
+
+// Iniciar la búsqueda de subordinados desde el jefe que inició sesión
+find_subordinates($org_data, $colaboradores, $jefe_id);
+
+// Convertir los datos a JSON para JavaScript
+$org_data_json = json_encode($org_data);
+
+// Calcular KPIs
+$sql_kpi = "SELECT 
+                COUNT(*) as team_count, 
+                AVG(DATEDIFF(CURDATE(), c.fecha_ingreso) / 365.25) as avg_tenure,
+                COUNT(DISTINCT d.nombre) as dept_count
+            FROM colaborador c 
+            JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
+            WHERE c.id_jefe_fk = ? AND c.activo = 1";
+$stmt_kpi = $conn->prepare($sql_kpi);
+$stmt_kpi->bind_param('i', $jefe_id);
+$stmt_kpi->execute();
+$kpi_result = $stmt_kpi->get_result()->fetch_assoc();
 
 ?>
 <!DOCTYPE html>
@@ -32,65 +92,89 @@ $result = $stmt->get_result();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mi Equipo - Edginton S.A.</title>
+    <title>Dashboard de Equipo - Edginton S.A.</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
     <style>
+        :root {
+            --primary-color: #5e72e4;
+            --secondary-color: #f4f7fc;
+            --text-dark: #32325d;
+            --text-light: #8898aa;
+            --card-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
         body {
             font-family: 'Poppins', sans-serif;
-            background-color: #f4f7fc;
+            background-color: var(--secondary-color);
         }
-        .team-container {
-            max-width: 1200px;
-            margin: auto;
-            padding: 2rem 1rem;
+        .main-content {
+            margin-left: 280px; /* Ajusta al ancho de tu sidebar */
+            padding: 2rem;
         }
-        .team-header {
-            color: #32325d;
-            font-weight: 700;
-            margin-bottom: 0.5rem;
-        }
-        .team-subheader {
-            color: #6c757d;
-            margin-bottom: 2.5rem;
-        }
-        .employee-card {
-            border: 1px solid #e9ecef;
-            border-radius: 1rem;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-            height: 100%;
-        }
-        .employee-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-        }
-        .employee-card .card-body {
-            padding: 1.5rem;
-        }
-        .employee-card .card-title {
-            font-weight: 600;
-            color: #5e72e4;
-        }
-        .employee-card .card-subtitle {
-            font-weight: 500;
-            color: #8898aa;
-        }
-        .employee-card .list-group-item {
+        .header h1 { color: var(--text-dark); font-weight: 700; }
+        .header p { color: var(--text-light); }
+
+        .stat-card {
+            background-color: #fff;
             border: none;
-            padding: 0.5rem 0;
+            border-radius: 1rem;
+            padding: 1.5rem;
+            box-shadow: var(--card-shadow);
+            display: flex;
+            align-items: center;
+        }
+        .stat-card .icon {
+            font-size: 2.5rem;
+            padding: 1rem;
+            border-radius: 50%;
+            color: #fff;
+        }
+        .stat-card .info .value {
+            font-size: 1.75rem;
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+        .stat-card .info .label {
             font-size: 0.9rem;
-            color: #525f7f;
+            color: var(--text-light);
         }
-        .employee-card .list-group-item i {
-            color: #5e72e4;
-            margin-right: 0.75rem;
-            width: 20px;
+        
+        /* Estilos para el Organigrama */
+        #orgchart_div {
+            width: 100%;
+            overflow-x: auto;
+            padding: 1rem;
         }
-        #searchInput {
-            border-radius: 0.75rem;
-            padding: 0.75rem 1rem;
+        .google-visualization-orgchart-node {
+            border: none;
+            border-radius: 1rem;
+            box-shadow: var(--card-shadow);
+            background: #fff;
+            padding: 0.5rem;
+            text-align: center;
+        }
+        .org-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin: 0.5rem auto 0.5rem auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        .org-name {
+            font-weight: 600;
+            color: var(--text-dark);
+            font-size: 0.9rem;
+        }
+        .org-dept {
+            color: var(--text-light);
+            font-size: 0.8rem;
         }
     </style>
 </head>
@@ -98,89 +182,84 @@ $result = $stmt->get_result();
 
 <?php include 'header.php'; ?>
 
-<div class="team-container">
-    <div class="text-center">
-        <h1 class="team-header">Mi Equipo</h1>
-        <p class="team-subheader">Visualiza y gestiona los miembros de tu equipo.</p>
-    </div>
-
-    <div class="row mb-4">
-        <div class="col-md-6 offset-md-3">
-             <div class="input-group">
-                <span class="input-group-text bg-light border-0"><i class="bi bi-search"></i></span>
-                <input type="text" id="searchInput" class="form-control border-0 bg-light" placeholder="Buscar por nombre o departamento...">
-            </div>
+<div class="main-content">
+    <div class="container-fluid">
+        <div class="header mb-4">
+            <h1><i class="bi bi-diagram-3-fill me-2"></i>Dashboard de Equipo</h1>
+            <p>Una vista general e interactiva de la estructura de tu equipo.</p>
         </div>
-    </div>
 
-    <div class="row" id="team-cards-container">
-        <?php if ($result->num_rows > 0): ?>
-            <?php while ($row = $result->fetch_assoc()): ?>
-                <div class="col-xl-4 col-md-6 mb-4 team-member-card">
-                    <div class="card employee-card">
-                        <div class="card-body">
-                            <h5 class="card-title"><?php echo htmlspecialchars($row['nombre']); ?></h5>
-                            <h6 class="card-subtitle mb-3"><?php echo htmlspecialchars($row['departamento']); ?></h6>
-                            <ul class="list-group list-group-flush">
-                                <li class="list-group-item">
-                                    <i class="bi bi-calendar-check-fill"></i>
-                                    <strong>Ingreso:</strong> <?php echo htmlspecialchars($row['fecha_ingreso']); ?>
-                                </li>
-                                <li class="list-group-item">
-                                    <i class="bi bi-cash-coin"></i>
-                                    <strong>Salario:</strong> ₡<?php echo number_format($row['salario_bruto'], 2); ?>
-                                </li>
-                                <li class="list-group-item">
-                                    <i class="bi bi-person-check-fill"></i>
-                                    <strong>Jefe:</strong> <?php echo htmlspecialchars($row['jefe']); ?>
-                                </li>
-                            </ul>
-                        </div>
+        <div class="row g-4 mb-5">
+            <div class="col-lg-4 col-md-6">
+                <div class="stat-card">
+                    <div class="icon bg-primary me-3"><i class="bi bi-people-fill"></i></div>
+                    <div class="info">
+                        <div class="value"><?= $kpi_result['team_count'] ?? 0 ?></div>
+                        <div class="label">Miembros del Equipo</div>
                     </div>
                 </div>
-            <?php endwhile; ?>
-        <?php else: ?>
-            <div class="col-12">
-                <p class="text-center text-muted mt-5">No tienes colaboradores asignados a tu equipo.</p>
             </div>
-        <?php endif; ?>
-         <div class="col-12 text-center mt-4" id="no-results" style="display: none;">
-            <p class="text-muted">No se encontraron colaboradores con ese nombre.</p>
+            <div class="col-lg-4 col-md-6">
+                <div class="stat-card">
+                    <div class="icon bg-success me-3"><i class="bi bi-award-fill"></i></div>
+                    <div class="info">
+                        <div class="value"><?= number_format($kpi_result['avg_tenure'] ?? 0, 1) ?> años</div>
+                        <div class="label">Antigüedad Promedio</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-4 col-md-6">
+                <div class="stat-card">
+                    <div class="icon bg-info me-3"><i class="bi bi-building-fill"></i></div>
+                    <div class="info">
+                        <div class="value"><?= $kpi_result['dept_count'] ?? 0 ?></div>
+                        <div class="label">Departamentos</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card card-main">
+            <div class="card-header bg-white border-0 pt-3">
+                <h5 class="mb-0">Organigrama del Equipo</h5>
+            </div>
+            <div class="card-body">
+                <?php if ($team_members_count > 0): ?>
+                    <div id="orgchart_div"></div>
+                <?php else: ?>
+                    <div class="text-center p-5">
+                        <p class="text-muted fs-4">No tienes colaboradores asignados a tu equipo.</p>
+                    </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    const searchInput = document.getElementById('searchInput');
-    const cardsContainer = document.getElementById('team-cards-container');
-    const memberCards = cardsContainer.querySelectorAll('.team-member-card');
-    const noResultsMessage = document.getElementById('no-results');
+<script type="text/javascript">
+    google.charts.load('current', {packages:['orgchart']});
+    google.charts.setOnLoadCallback(drawChart);
 
-    searchInput.addEventListener('keyup', function () {
-        const filter = searchInput.value.toLowerCase();
-        let visibleCards = 0;
+    function drawChart() {
+        var data = new google.visualization.DataTable();
+        data.addColumn('object', 'Name');
+        data.addColumn('string', 'Manager');
+        data.addColumn('string', 'ToolTip');
 
-        memberCards.forEach(function (card) {
-            const name = card.querySelector('.card-title').textContent.toLowerCase();
-            const department = card.querySelector('.card-subtitle').textContent.toLowerCase();
+        // Los datos se insertan desde PHP
+        data.addRows(<?= $org_data_json ?>);
 
-            if (name.includes(filter) || department.includes(filter)) {
-                card.style.display = '';
-                visibleCards++;
-            } else {
-                card.style.display = 'none';
-            }
-        });
+        var chart = new google.visualization.OrgChart(document.getElementById('orgchart_div'));
+        
+        // Opciones del gráfico
+        var options = {
+            'allowHtml': true, // Permite usar HTML en las tarjetas
+            'nodeClass': 'google-visualization-orgchart-node',
+            'selectedNodeClass': 'bg-light'
+        };
 
-        if (visibleCards === 0) {
-            noResultsMessage.style.display = 'block';
-        } else {
-            noResultsMessage.style.display = 'none';
-        }
-    });
-});
+        chart.draw(data, options);
+    }
 </script>
 
 </body>

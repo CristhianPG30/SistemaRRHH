@@ -107,59 +107,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message_type = $stmt->execute() ? 'success' : 'danger';
         $stmt->close();
     }
-    
-    // Manejo de Roles
-    if (isset($_POST['save_role'])) {
-        $id = intval($_POST['idIdRol']);
-        $descripcion = trim($_POST['descripcion']);
-        if (!empty($descripcion)) {
-            if ($id > 0) {
-                $stmt = $conn->prepare("UPDATE idrol SET descripcion = ? WHERE idIdRol = ?");
-                $stmt->bind_param("si", $descripcion, $id);
-                $message = "¡Rol actualizado con éxito!";
-            } else {
-                $stmt = $conn->prepare("INSERT INTO idrol (descripcion) VALUES (?)");
-                $stmt->bind_param("s", $descripcion);
-                $message = "¡Rol agregado con éxito!";
-            }
-            if (!$stmt->execute()) {
-                $message = 'Error al guardar el rol.';
-                $message_type = "danger";
-            }
-            $stmt->close();
-        } else {
-            $message = "La descripción del rol no puede estar vacía.";
-            $message_type = "danger";
-        }
-    }
-
-    // Eliminar Rol
-    if (isset($_POST['delete_role_id'])) {
-        $id = intval($_POST['delete_role_id']);
-        $stmt_check = $conn->prepare("SELECT COUNT(*) FROM usuario WHERE id_rol_fk = ?");
-        $stmt_check->bind_param("i", $id);
-        $stmt_check->execute();
-        $stmt_check->bind_result($count);
-        $stmt_check->fetch();
-        $stmt_check->close();
-        
-        if ($count > 0) {
-            $message = "Error: No se puede eliminar el rol porque está asignado a usuarios.";
-            $message_type = "danger";
-        } else {
-            $stmt = $conn->prepare("DELETE FROM idrol WHERE idIdRol = ?");
-            $stmt->bind_param("i", $id);
-            $message = $stmt->execute() ? 'Rol eliminado con éxito.' : 'Error al eliminar el rol.';
-            $message_type = $stmt->execute() ? 'success' : 'danger';
-            $stmt->close();
-        }
-    }
 }
 
 // --- OBTENCIÓN DE DATOS PARA LA VISTA ---
 $configData = json_decode(file_get_contents($configFilePath), true);
 $deducciones_raw = $conn->query("SELECT * FROM tipo_deduccion_cat ORDER BY Descripcion");
-$roles = $conn->query("SELECT idIdRol, descripcion FROM idrol ORDER BY descripcion ASC")->fetch_all(MYSQLI_ASSOC);
 $feriados_actuales = file_exists($feriadosFilePath) ? json_decode(file_get_contents($feriadosFilePath), true) : [];
 ?>
 <!DOCTYPE html>
@@ -197,36 +149,9 @@ $feriados_actuales = file_exists($feriadosFilePath) ? json_decode(file_get_conte
             <div class="col-lg-6">
                 <div class="card mb-4">
                     <div class="card-header"><h5 class="mb-0"><i class="bi bi-gear-fill me-2"></i>Configuración General</h5></div>
-                    <div class="card-body p-4">
-                        <form method="POST">
-                            <input type="hidden" name="update_config" value="1">
-                            <div class="mb-3"><label class="form-label fw-bold">Nombre de Empresa</label><input type="text" class="form-control" name="nombre_empresa" value="<?= htmlspecialchars($configData['nombre_empresa']); ?>" required></div>
-                            <div class="mb-3"><label class="form-label fw-bold">Tarifa por Hora Extra (₡)</label><input type="number" step="0.01" class="form-control" name="tarifa_hora_extra" value="<?= htmlspecialchars($configData['tarifa_hora_extra']); ?>" required></div>
-                            <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save me-1"></i>Guardar Configuración</button>
-                        </form>
                     </div>
-                </div>
 
                 <div class="card">
-                    <div class="card-header"><h5 class="mb-0"><i class="bi bi-shield-lock-fill me-2"></i>Roles del Sistema</h5><button class="btn btn-sm btn-outline-primary" onclick="openRoleModal()"><i class="bi bi-plus"></i> Nuevo Rol</button></div>
-                    <div class="card-body p-2">
-                        <ul class="list-group list-group-flush">
-                            <?php foreach ($roles as $rol): ?>
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <?= htmlspecialchars($rol['descripcion']); ?>
-                                <div>
-                                    <button class="btn btn-sm btn-light" onclick='openRoleModal(<?= json_encode($rol) ?>)'><i class="bi bi-pencil text-primary"></i></button>
-                                    <button class="btn btn-sm btn-light" onclick="confirmDelete('role', <?= $rol['idIdRol'] ?>)"><i class="bi bi-trash text-danger"></i></button>
-                                </div>
-                            </li>
-                            <?php endforeach; ?>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-lg-6">
-                <div class="card mb-4">
                     <div class="card-header"><h5 class="mb-0"><i class="bi bi-journal-minus me-2"></i>Deducciones de Ley</h5><button class="btn btn-sm btn-outline-primary" onclick="openDeductionModal()"><i class="bi bi-plus"></i> Nueva Deducción</button></div>
                     <div class="card-body p-2">
                         <ul class="list-group list-group-flush">
@@ -247,7 +172,9 @@ $feriados_actuales = file_exists($feriadosFilePath) ? json_decode(file_get_conte
                         </ul>
                     </div>
                 </div>
+            </div>
 
+            <div class="col-lg-6">
                 <div class="card">
                     <div class="card-header"><h5 class="mb-0"><i class="bi bi-calendar-event-fill me-2"></i>Gestión de Feriados</h5></div>
                     <div class="card-body p-4">
@@ -276,17 +203,17 @@ $feriados_actuales = file_exists($feriadosFilePath) ? json_decode(file_get_conte
     </div>
     
     <div class="modal fade" id="deductionModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><form method="POST" class="modal-content"><div class="modal-header"><h5 class="modal-title" id="deductionModalLabel"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" name="save_deduction" value="1"><input type="hidden" name="idTipoDeduccion" id="idTipoDeduccion"><div class="mb-3"><label class="form-label">Nombre de Deducción</label><input type="text" class="form-control" name="nombre_deduccion" id="nombre_deduccion" required></div><div class="mb-3"><label class="form-label">Porcentaje (%)</label><input type="number" step="0.01" class="form-control" name="porcentaje" id="porcentaje" required></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary">Guardar</button></div></form></div></div>
-    <div class="modal fade" id="roleModal" tabindex="-1"><div class="modal-dialog modal-dialog-centered"><form method="POST" class="modal-content"><div class="modal-header"><h5 class="modal-title" id="roleModalLabel"></h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="hidden" name="save_role" value="1"><input type="hidden" name="idIdRol" id="idIdRol"><div class="mb-3"><label class="form-label">Descripción del Rol</label><input type="text" class="form-control" name="descripcion" id="descripcion" required></div></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button><button type="submit" class="btn btn-primary">Guardar</button></div></form></div></div>
+    
     <div class="modal fade" id="confirmDeleteModal" tabindex="-1"><div class="modal-dialog modal-sm modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">Confirmar</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body">¿Seguro que deseas eliminar?</div><div class="modal-footer"><form method="POST" id="deleteForm"><input type="hidden" id="delete_id_input" name=""></form><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">No</button><button type="button" class="btn btn-danger" id="confirmDeleteBtn">Sí, Eliminar</button></div></div></div></div>
     
     <?php include 'footer.php'; ?>
     <script>
         const deductionModal = new bootstrap.Modal(document.getElementById('deductionModal'));
-        const roleModal = new bootstrap.Modal(document.getElementById('roleModal'));
         const confirmDeleteModal = new bootstrap.Modal(document.getElementById('confirmDeleteModal'));
 
         function openDeductionModal(data = null) {
-            const form = document.getElementById('deductionModal').querySelector('form'); form.reset();
+            const form = document.getElementById('deductionModal').querySelector('form');
+            form.reset();
             const label = document.getElementById('deductionModalLabel');
             if (data) {
                 const parts = data.Descripcion.split(':');
@@ -299,20 +226,6 @@ $feriados_actuales = file_exists($feriadosFilePath) ? json_decode(file_get_conte
                 form.idTipoDeduccion.value = '';
             }
             deductionModal.show();
-        }
-
-        function openRoleModal(data = null) {
-            const form = document.getElementById('roleModal').querySelector('form'); form.reset();
-            const label = document.getElementById('roleModalLabel');
-            if (data) {
-                label.innerHTML = '<i class="bi bi-pencil-fill me-2"></i>Editar Rol';
-                form.idIdRol.value = data.idIdRol;
-                form.descripcion.value = data.descripcion;
-            } else {
-                label.innerHTML = '<i class="bi bi-plus-circle-fill me-2"></i>Nuevo Rol';
-                form.idIdRol.value = '';
-            }
-            roleModal.show();
         }
 
         function confirmDelete(type, id) {
