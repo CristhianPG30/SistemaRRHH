@@ -6,15 +6,12 @@ if (session_status() === PHP_SESSION_NONE) {
         'cookie_samesite' => 'Strict'
     ]);
 }
-
 include 'db.php';
-
 // --- Acceso para Administrador (1) y Recursos Humanos (4) ---
 if (!isset($_SESSION['username']) || !in_array($_SESSION['rol'], [1, 4])) {
     header('Location: login.php');
     exit;
 }
-
 $flash_message = '';
 if (isset($_SESSION['flash_message'])) {
     $flash_message = "<div class='alert alert-{$_SESSION['flash_message']['type']} alert-dismissible fade show' role='alert'>
@@ -23,7 +20,6 @@ if (isset($_SESSION['flash_message'])) {
                           </div>";
     unset($_SESSION['flash_message']);
 }
-
 // --- Inicialización de Variables ---
 $is_edit_mode = false;
 $idPersona = ''; $nombre = ''; $apellido1 = ''; $apellido2 = ''; $cedula = ''; $fecha_nac = '';
@@ -32,20 +28,17 @@ $nacionalidad_id = ''; $genero_id = ''; $telefono = ''; $departamento_id = '';
 $provincia_id = ''; $canton_id = ''; $distrito_id = '';
 $salario_bruto = ''; $cantidad_hijos = '0'; $fecha_ingreso = '';
 $page_title = 'Agregar Nueva Persona';
-
 // --- Datos para Selectores ---
 $opciones_estado_civil = [1 => 'Soltero(a)', 2 => 'Casado(a)', 3 => 'Divorciado(a)', 4 => 'Viudo(a)', 5 => 'Unión Libre'];
 $opciones_genero = [1 => 'Masculino', 2 => 'Femenino', 3 => 'Prefiero no indicar'];
 $nacionalidades_db = $conn->query("SELECT idNacionalidad, Descripcion FROM nacionalidad ORDER BY Descripcion");
 $departamentos = $conn->query("SELECT idDepartamento, nombre FROM departamento JOIN estado_cat ON departamento.id_estado_fk = estado_cat.idEstado WHERE estado_cat.Descripcion = 'Activo' ORDER BY nombre");
 $jefes_activos = $conn->query("SELECT c.idColaborador, p.Nombre, p.Apellido1, p.Apellido2 FROM colaborador c JOIN persona p ON c.id_persona_fk = p.idPersona WHERE c.activo = 1 ORDER BY p.Nombre, p.Apellido1");
-
 // --- Lógica de Edición (Cargar Datos Existentes) ---
 if (isset($_GET['id']) && !empty($_GET['id'])) {
     $is_edit_mode = true;
     $idPersona = intval($_GET['id']);
     $page_title = 'Editar Información de Persona';
-
     $sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula, p.Fecha_nac, p.id_estado_civil_fk,
                    p.id_nacionalidad_fk, p.id_genero_cat_fk, p.cantidad_hijos,
                    c.id_departamento_fk, c.salario_bruto, c.fecha_ingreso, d.Dir_exacta, d.Provincias_idProvincias,
@@ -61,7 +54,6 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
     $stmt->bind_param("i", $idPersona);
     $stmt->execute();
     $result = $stmt->get_result();
-
     if ($result->num_rows > 0) {
         $data = $result->fetch_assoc();
         $nombre = $data['Nombre']; $apellido1 = $data['Apellido1']; $apellido2 = $data['Apellido2'];
@@ -79,13 +71,11 @@ if (isset($_GET['id']) && !empty($_GET['id'])) {
     }
     $stmt->close();
 }
-
 // --- Procesamiento del Formulario (POST) ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     session_regenerate_id(true);
     $idPersona = isset($_POST['idPersona']) ? intval($_POST['idPersona']) : 0;
     $is_edit_mode = ($idPersona > 0);
-
     // Recolección y limpieza de datos...
     $nombre = trim($_POST['nombre']);
     $apellido1 = trim($_POST['apellido1']);
@@ -106,9 +96,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $salario_bruto_post = isset($_POST['salario_bruto']) ? floatval($_POST['salario_bruto']) : 0.0;
     $cantidad_hijos_post = isset($_POST['cantidad_hijos']) ? intval($_POST['cantidad_hijos']) : 0;
     $fecha_ingreso_post = trim($_POST['fecha_ingreso']);
-
     $telefono_limpio = preg_replace('/[^0-9]/', '', $telefono_post);
-    $cedula_limpia = preg_replace('/[^a-zA-Z0-9]/', '', $cedula_post);
+    $cedula_limpia = preg_replace('/[^0-9]/', '', $cedula_post);
 
     // --- Validaciones del Servidor ---
     $errors = [];
@@ -116,6 +105,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (empty($apellido1) || !preg_match("/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/u", $apellido1)) $errors[] = "El primer apellido es inválido.";
     if (empty($apellido2) || !preg_match("/^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/u", $apellido2)) $errors[] = "El segundo apellido es inválido.";
     if (empty($cedula_limpia)) $errors[] = "El campo de identificación es obligatorio.";
+    // Validación Cédula/DIMEX
+    if ($nacionalidad_post && $nacionalidades_db) {
+        mysqli_data_seek($nacionalidades_db, 0);
+        while ($nac = $nacionalidades_db->fetch_assoc()) {
+            if ($nac['idNacionalidad'] == $nacionalidad_post) {
+                $desc = strtolower($nac['Descripcion']);
+                if (strpos($desc, 'costarricense') !== false) {
+                    if (!preg_match('/^\d{9}$/', $cedula_limpia)) $errors[] = "La cédula debe contener exactamente 9 dígitos.";
+                } else {
+                    if (!preg_match('/^\d{11,12}$/', $cedula_limpia)) $errors[] = "El DIMEX debe contener 11 o 12 dígitos.";
+                }
+            }
+        }
+    }
     if (!preg_match('/^[245678]\d{7}$/', $telefono_limpio)) $errors[] = "El teléfono debe tener 8 dígitos y empezar con 2, 4, 5, 6, 7 u 8.";
     if (empty($correo_electronico_post) || !filter_var($correo_electronico_post, FILTER_VALIDATE_EMAIL)) $errors[] = "El correo electrónico es inválido.";
     if (empty($fecha_nac) || (new DateTime())->diff(new DateTime($fecha_nac))->y < 18) $errors[] = "La persona debe ser mayor de 18 años.";
@@ -186,7 +189,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $_SESSION['flash_message'] = ['type' => 'success', 'message' => '¡Operación realizada con éxito!'];
             header('Location: personas.php');
             exit;
-
         } catch (Exception $e) {
             $conn->rollback();
             $_SESSION['flash_message'] = ['type' => 'danger', 'message' => 'Error al guardar los datos: ' . $e->getMessage()];
@@ -229,7 +231,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 </head>
 <body>
     <?php include 'header.php'; ?>
-
     <main class="main-content">
         <div class="container my-4">
             <div class="text-center mb-4">
@@ -237,26 +238,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 <p class="text-muted">Completa la información en cada paso para continuar.</p>
             </div>
             <?= $flash_message ?>
-
             <div class="form-stepper">
                 <div class="step active" data-step-target="1"><div class="step-circle">1</div><div class="step-title">Personal</div></div>
                 <div class="step" data-step-target="2"><div class="step-circle">2</div><div class="step-title">Contacto</div></div>
                 <div class="step" data-step-target="3"><div class="step-circle">3</div><div class="step-title">Laboral</div></div>
             </div>
-
             <form id="personaForm" action="form_persona.php<?= $is_edit_mode ? '?id='.$idPersona : '' ?>" method="POST" novalidate>
                 <input type="hidden" name="idPersona" value="<?= htmlspecialchars($idPersona); ?>">
-
                 <div class="card p-4">
                     <div id="validation-alert" class="alert alert-danger d-none" role="alert"></div>
-
                     <div class="form-step active" data-step-content="1">
                         <h5 class="mb-4">Paso 1: Información Personal</h5>
                         <div class="row">
                             <div class="col-md-4 mb-3"><label for="nombre" class="form-label required">Nombre</label><input type="text" class="form-control" name="nombre" value="<?= htmlspecialchars($nombre); ?>" pattern="^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$" title="El nombre solo puede contener letras y espacios." required></div>
                             <div class="col-md-4 mb-3"><label for="apellido1" class="form-label required">Primer Apellido</label><input type="text" class="form-control" name="apellido1" value="<?= htmlspecialchars($apellido1); ?>" pattern="^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$" title="El apellido solo puede contener letras y espacios." required></div>
                             <div class="col-md-4 mb-3"><label for="apellido2" class="form-label required">Segundo Apellido</label><input type="text" class="form-control" name="apellido2" value="<?= htmlspecialchars($apellido2); ?>" pattern="^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$" title="El apellido solo puede contener letras y espacios." required></div>
-                            
                             <div class="col-md-4 mb-3">
                                 <label for="nacionalidad" class="form-label required">Nacionalidad</label>
                                 <select class="form-select" id="nacionalidad" name="nacionalidad" required>
@@ -266,12 +262,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                         mysqli_data_seek($nacionalidades_db, 0);
                                         while ($nac = $nacionalidades_db->fetch_assoc()):
                                             $descripcion_lower = strtolower($nac['Descripcion']);
-                                            $tipo_doc = 'Pasaporte';
-
+                                            $tipo_doc = 'DIMEX';
                                             if (strpos($descripcion_lower, 'costarricense') !== false) {
                                                 $tipo_doc = 'Cedula';
-                                            } elseif (strpos($descripcion_lower, 'extranjero residente') !== false) {
-                                                $tipo_doc = 'DIMEX';
                                             }
                                     ?>
                                             <option value="<?= $nac['idNacionalidad']; ?>"
@@ -287,7 +280,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             </div>
                             <div class="col-md-4 mb-3"><label for="cedula" id="label-cedula" class="form-label required">Identificación</label><input type="text" class="form-control" id="cedula" name="cedula" value="<?= htmlspecialchars($cedula); ?>" title="Seleccione una nacionalidad primero." required></div>
                             <div class="col-md-4 mb-3"><label for="fecha_nac" class="form-label required">Fecha de Nacimiento</label><input type="date" class="form-control" name="fecha_nac" value="<?= htmlspecialchars($fecha_nac); ?>" required></div>
-
                             <div class="col-md-6 mb-3"><label for="cantidad_hijos" class="form-label required">Cantidad de Hijos</label><input type="number" class="form-control" name="cantidad_hijos" value="<?= htmlspecialchars($cantidad_hijos); ?>" min="0" required></div>
                             <div class="col-md-6 mb-3"><label for="genero" class="form-label required">Género</label><select class="form-select" name="genero" required><option value="">Seleccione...</option><?php foreach ($opciones_genero as $id => $desc): ?><option value="<?= $id; ?>" <?= ($genero_id == $id) ? 'selected' : ''; ?>><?= htmlspecialchars($desc); ?></option><?php endforeach; ?></select></div>
                         </div>
@@ -296,7 +288,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
                         </div>
                     </div>
-
                     <div class="form-step" data-step-content="2">
                         <h5 class="mb-4">Paso 2: Contacto y Ubicación</h5>
                         <div class="row">
@@ -314,22 +305,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
                         </div>
                     </div>
-
                     <div class="form-step" data-step-content="3">
                         <h5 class="mb-4">Paso 3: Datos Laborales y Adicionales</h5>
                         <div class="row">
                             <div class="col-md-6 mb-3"><label for="departamento" class="form-label required">Departamento</label><select class="form-select" name="departamento" required><option value="">Seleccione...</option><?php if($departamentos && $departamentos->num_rows > 0) { mysqli_data_seek($departamentos, 0); while ($dept = $departamentos->fetch_assoc()): ?><option value="<?= $dept['idDepartamento']; ?>" <?= ($departamento_id == $dept['idDepartamento']) ? 'selected' : ''; ?>><?= htmlspecialchars($dept['nombre']); ?></option><?php endwhile; } ?></select></div>
                             <div class="col-md-6 mb-3"><label for="fecha_ingreso" class="form-label required">Fecha de Ingreso</label><input type="date" class="form-control" name="fecha_ingreso" value="<?= htmlspecialchars($fecha_ingreso); ?>" required></div>
-
                             <?php if (!$is_edit_mode): ?>
                             <div class="col-md-6 mb-3"><label for="id_jefe_fk" class="form-label required">Jefe Directo</label><select class="form-select" name="id_jefe_fk" required><option value="">Seleccione...</option><?php if($jefes_activos && $jefes_activos->num_rows > 0): mysqli_data_seek($jefes_activos, 0); while ($jefe = $jefes_activos->fetch_assoc()): ?><option value="<?= $jefe['idColaborador']; ?>"><?= htmlspecialchars($jefe['Nombre'] . ' ' . $jefe['Apellido1'] . ' ' . $jefe['Apellido2']); ?></option><?php endwhile; endif; ?></select></div>
                             <?php endif; ?>
-
                             <div class="col-md-6 mb-3">
                                 <label for="salario_bruto" class="form-label required">Salario Bruto (₡)</label>
                                 <input type="number" step="0.01" min="0" class="form-control" name="salario_bruto" value="<?= htmlspecialchars($salario_bruto); ?>" required title="El salario no puede ser negativo.">
                             </div>
-
                             <div class="col-md-6 mb-3">
                                 <label for="horario" class="form-label">Horario</label>
                                 <select class="form-select" id="horario" name="horario" disabled>
@@ -344,31 +331,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             <button type="submit" class="btn btn-primary"><i class="bi bi-save-fill me-2"></i><?= $is_edit_mode ? 'Actualizar Persona' : 'Guardar Persona'; ?></button>
                         </div>
                     </div>
-
                 </div>
             </form>
         </div>
     </main>
-
     <script>
     document.addEventListener('DOMContentLoaded', function () {
         const stepper = document.querySelector('.form-stepper');
         const formSteps = document.querySelectorAll('.form-step');
         const alertContainer = document.getElementById('validation-alert');
         let currentStep = 1;
-
         const nacionalidadSelect = document.getElementById('nacionalidad');
         const cedulaInput = document.getElementById('cedula');
         const cedulaLabel = document.getElementById('label-cedula');
-
         function updateCedulaValidation(isInitialLoad = false) {
             const selectedOption = nacionalidadSelect.options[nacionalidadSelect.selectedIndex];
             const tipoDocumento = selectedOption ? selectedOption.dataset.tipoDoc : null;
-
             if (!isInitialLoad) {
                 cedulaInput.value = '';
             }
-
             switch(tipoDocumento) {
                 case 'Cedula':
                     cedulaLabel.innerHTML = 'Cédula <span class="text-danger">*</span>';
@@ -384,13 +365,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     cedulaInput.placeholder = '12345678901';
                     cedulaInput.maxLength = 12;
                     break;
-                case 'Pasaporte':
-                    cedulaLabel.innerHTML = 'Pasaporte <span class="text-danger">*</span>';
-                    cedulaInput.pattern = '^[a-zA-Z0-9]{6,20}$';
-                    cedulaInput.title = 'El pasaporte debe contener de 6 a 20 caracteres alfanuméricos.';
-                    cedulaInput.placeholder = 'A1B2C3D4E5';
-                    cedulaInput.maxLength = 20;
-                    break;
                 default:
                     cedulaLabel.innerHTML = 'Identificación <span class="text-danger">*</span>';
                     cedulaInput.removeAttribute('pattern');
@@ -399,10 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     cedulaInput.placeholder = '';
             }
         }
-        
         nacionalidadSelect.addEventListener('change', () => updateCedulaValidation(false));
         updateCedulaValidation(true);
-
         function goToStep(stepNumber) {
             alertContainer.classList.add('d-none');
             currentStep = stepNumber;
@@ -414,7 +386,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 if (index + 1 === currentStep) step.classList.add('active');
             });
         }
-
         function validateStep(stepIndex) {
             const currentFormStep = document.querySelector(`[data-step-content="${stepIndex}"]`);
             let isValid = true;
@@ -424,12 +395,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 let hasError = false;
                 let errorMessage = '';
                 const label = input.closest('.mb-3').querySelector('label')?.innerText.replace(' *', '') || 'Un campo';
-                
                 let valueToTest = input.value.trim();
                 if (input.name === 'cedula' || input.name === 'telefono') {
                     valueToTest = valueToTest.replace(/[^a-zA-Z0-9]/g, '');
                 }
-
                 if (!valueToTest && input.required) {
                     hasError = true;
                     errorMessage = `${label} es un campo obligatorio.`;
@@ -477,7 +446,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
             return isValid;
         }
-
         document.querySelectorAll('[data-nav]').forEach(button => {
             button.addEventListener('click', () => {
                 const direction = button.dataset.nav === 'next' ? 1 : -1;
@@ -488,7 +456,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             });
         });
-
         stepper.querySelectorAll('.step').forEach(step_el => {
             const targetStep = parseInt(step_el.dataset.stepTarget);
             step_el.addEventListener('click', () => {
@@ -503,7 +470,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 if(canNavigate) goToStep(targetStep);
             });
         });
-
         const phoneInput = document.getElementById('telefono');
         phoneInput.addEventListener('input', function (e) {
             let value = e.target.value.replace(/\D/g, '');
@@ -512,46 +478,38 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
             e.target.value = value;
         });
-        
         const telefonoInput = document.getElementById('telefono');
         telefonoInput.pattern = '^[245678]\\d{7}$';
         telefonoInput.title = 'El teléfono debe tener 8 dígitos y empezar con 2, 4, 5, 6, 7 u 8.';
-
         const emailInput = document.querySelector('input[name="correo_electronico"]');
         emailInput.pattern = '[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,4}$';
         emailInput.title = 'Ingrese un correo electrónico válido.';
-
         const provinciaSelect = document.getElementById('provincia');
         const cantonSelect = document.getElementById('canton');
         const distritoSelect = document.getElementById('distrito');
         const initialData = { provincia: '<?= $provincia_id ?? "" ?>', canton: '<?= $canton_id ?? "" ?>', distrito: '<?= $distrito_id ?? "" ?>' };
         let ubicacionesData = {};
-
         function populateSelect(select, items, selectedId) {
             select.innerHTML = '<option value="">Seleccione...</option>';
             for (const id in items) { select.add(new Option(items[id], id)); }
             if (selectedId) { select.value = selectedId; }
         }
-
         fetch('js/ubicaciones.json').then(r => r.json()).then(data => {
             ubicacionesData = data;
             populateSelect(provinciaSelect, data.provincias, initialData.provincia);
             if (initialData.provincia) provinciaSelect.dispatchEvent(new Event('change'));
         });
-
         provinciaSelect.addEventListener('change', () => {
             const cantones = ubicacionesData.cantones[provinciaSelect.value] || {};
             populateSelect(cantonSelect, cantones, initialData.canton);
             if (initialData.canton) { cantonSelect.dispatchEvent(new Event('change')); initialData.canton = null; }
             else { distritoSelect.innerHTML = '<option value="">Seleccione...</option>'; }
         });
-
         cantonSelect.addEventListener('change', () => {
             const distritos = ubicacionesData.distritos[provinciaSelect.value]?.[cantonSelect.value] || {};
             populateSelect(distritoSelect, distritos, initialData.distrito);
             if (initialData.distrito) initialData.distrito = null;
         });
-
         document.getElementById('personaForm').addEventListener('submit', event => {
             if (!validateStep(1) || !validateStep(2) || !validateStep(3)) {
                 event.preventDefault();

@@ -1,26 +1,31 @@
-<?php 
+<?php
 session_start();
-date_default_timezone_set('America/Costa_Rica'); 
+date_default_timezone_set('America/Costa_Rica');
 
-if (!isset($_SESSION['username'])) {
-    header('Location: login.php');
+// Validación estricta de sesión
+if (
+    !isset($_SESSION['username']) ||
+    !isset($_SESSION['persona_id']) ||
+    !isset($_SESSION['colaborador_id']) ||
+    empty($_SESSION['colaborador_id'])
+) {
+    // Limpia la sesión para evitar errores de datos incompletos
+    session_unset();
+    session_destroy();
+    header('Location: login.php?error=SesionInvalida');
     exit;
 }
 
-include 'db.php'; 
+include 'db.php';
 
-$username = $_SESSION['username'];
-$persona_id = $_SESSION['persona_id'];
-$mensaje = '';
-$tipoMensaje = '';
-
-if (!isset($_SESSION['colaborador_id']) || is_null($_SESSION['colaborador_id'])) {
-    die("Error crítico: El ID del colaborador no está definido en la sesión. Por favor, inicie sesión de nuevo.");
-}
+$username      = $_SESSION['username'];
+$persona_id    = $_SESSION['persona_id'];
 $colaborador_id = $_SESSION['colaborador_id'];
-$fechaHoy = date('Y-m-d');
+$fechaHoy      = date('Y-m-d');
+$mensaje       = '';
+$tipoMensaje   = '';
 
-// Control de asistencia
+// --- Consultar asistencia de hoy ---
 $stmt = $conn->prepare("SELECT * FROM control_de_asistencia WHERE Persona_idPersona = ? AND Fecha = ?");
 $stmt->bind_param("is", $persona_id, $fechaHoy);
 $stmt->execute();
@@ -28,10 +33,10 @@ $result = $stmt->get_result();
 $asistencia = ($result->num_rows > 0) ? $result->fetch_assoc() : null;
 $stmt->close();
 
-$marcoEntrada = ($asistencia && $asistencia['Entrada'] != NULL);
-$marcoSalida = ($asistencia && $asistencia['Salida'] != NULL && $asistencia['Salida'] != '00:00:00'); // <-- Permitir remarcar si es 00:00:00
+$marcoEntrada = ($asistencia && $asistencia['Entrada'] != null);
+$marcoSalida  = ($asistencia && $asistencia['Salida'] != null && $asistencia['Salida'] != '00:00:00');
 
-// Procesar marcaje de entrada
+// --- Marcar entrada ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
     $horaEntrada = date('H:i:s');
     if (!$marcoEntrada) {
@@ -40,6 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
         if ($stmtEntrada->execute()) {
             $mensaje = "¡Entrada marcada con éxito a las $horaEntrada!";
             $tipoMensaje = 'success';
+            // Actualiza los datos para la nueva carga
             $marcoEntrada = true;
             $asistencia = ['Entrada' => $horaEntrada, 'Salida' => null];
         } else {
@@ -50,10 +56,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_entrada'])) {
     }
 }
 
-// Procesar marcaje de salida y cálculo de horas extra
+// --- Marcar salida y calcular horas extra ---
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
     $horaSalida = date('H:i:s');
-    // Permitir remarcar si la salida es NULL o '00:00:00'
     if ($marcoEntrada && (!$marcoSalida || ($asistencia['Salida'] == '00:00:00'))) {
         $stmtSalida = $conn->prepare("UPDATE control_de_asistencia SET Salida = ?, Abierto = 0 WHERE Persona_idPersona = ? AND Fecha = ?");
         $stmtSalida->bind_param("sis", $horaSalida, $persona_id, $fechaHoy);
@@ -62,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
             $mensaje = "¡Salida marcada con éxito a las $horaSalida!";
             $tipoMensaje = 'success';
 
-            // RECARGAR el registro de asistencia actualizado para tomar cambios manuales
+            // Refresca datos de asistencia
             $stmt = $conn->prepare("SELECT * FROM control_de_asistencia WHERE Persona_idPersona = ? AND Fecha = ?");
             $stmt->bind_param("is", $persona_id, $fechaHoy);
             $stmt->execute();
@@ -72,28 +77,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
 
             $asistencia['Salida'] = $horaSalida;
 
-            // --- LÓGICA DE HORAS EXTRA (8h + más de 30min)
+            // --- HORAS EXTRA (mayor a 8h y más de 30min) ---
             $horaEntradaTimestamp = strtotime($asistencia['Entrada']);
-            $horaSalidaTimestamp = strtotime($horaSalida);
-            $totalSegundos = $horaSalidaTimestamp - $horaEntradaTimestamp;
-            $horasTrabajadas = $totalSegundos / 3600;
+            $horaSalidaTimestamp  = strtotime($horaSalida);
+            $totalSegundos        = $horaSalidaTimestamp - $horaEntradaTimestamp;
+            $horasTrabajadas      = $totalSegundos / 3600;
 
             if ($horasTrabajadas > 8) {
                 $extraSegundos = $totalSegundos - (8 * 3600);
-                if ($extraSegundos > 1800) { // más de 30 min (1800s)
-                    $horasExtra = floor($extraSegundos / 3600);
+                if ($extraSegundos > 1800) { // Más de 30 minutos extra
+                    $horasExtra   = floor($extraSegundos / 3600);
                     $minutosExtra = floor(($extraSegundos % 3600) / 60);
-
-                    // Redondea hacia arriba si los minutos extra son 30 o más
-                    $cantidad_horas = $horasExtra;
-                    if ($minutosExtra >= 30) {
-                        $cantidad_horas += 1;
-                    }
+                    $cantidad_horas = $horasExtra + (($minutosExtra >= 30) ? 1 : 0);
 
                     if ($cantidad_horas > 0) {
                         $horaInicioExtra = date('H:i:s', strtotime('+8 hours', $horaEntradaTimestamp));
-                        $observaciones = ''; // Campo requerido
-                        // Evitar duplicados: solo insertar si NO existe ya para hoy, la misma persona y mismo rango
+                        $observaciones   = '';
+
+                        // Prevenir duplicados
                         $stmtCheck = $conn->prepare("SELECT COUNT(*) FROM horas_extra WHERE Fecha = ? AND Persona_idPersona = ? AND hora_inicio = ? AND hora_fin = ?");
                         $stmtCheck->bind_param("siss", $fechaHoy, $persona_id, $horaInicioExtra, $horaSalida);
                         $stmtCheck->execute();
@@ -116,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
                     }
                 }
             }
-            // --- FIN LÓGICA HORAS EXTRA
+            // --- FIN HORAS EXTRA ---
         } else {
             $mensaje = "Error al marcar la salida.";
             $tipoMensaje = 'danger';
@@ -127,79 +128,30 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['marcar_salida'])) {
 
 $conn->close();
 ?>
+
 <?php include 'header.php'; ?>
 
 <style>
-    body {
-        background: #f3f6fb !important;
-        margin: 0;
-        padding: 0;
-    }
-    .main-content {
-        margin-left: 260px; /* Asegúrate que es el ancho real de tu sidebar */
-        padding: 36px 24px 0 24px;
-        min-height: 100vh;
-        background: #f7fafd;
-        transition: margin-left 0.3s;
-    }
-    @media (max-width: 991px) {
-        .main-content {
-            margin-left: 0;
-            padding: 24px 5px 0 5px;
-        }
-    }
-    .attendance-card {
-        background: #fff;
-        border-radius: 1.25rem;
-        box-shadow: 0 4px 24px 0 rgba(44,62,80,.08);
-        padding: 2.5rem;
-        text-align: center;
-    }
-    .action-button {
-        border: none;
-        border-radius: 0.75rem;
-        padding: 1.4rem 1rem;
-        font-size: 1.07rem;
-        font-weight: 500;
-        width: 100%;
-        margin-bottom: 5px;
-        transition: all 0.2s;
-    }
-    .action-button i {
-        font-size: 2rem;
-        display: block;
-        margin-bottom: 0.6rem;
-    }
+    body { background: #f3f6fb !important; margin: 0; padding: 0; }
+    .main-content { margin-left: 260px; padding: 36px 24px 0 24px; min-height: 100vh; background: #f7fafd; transition: margin-left 0.3s; }
+    @media (max-width: 991px) { .main-content { margin-left: 0; padding: 24px 5px 0 5px; } }
+    .attendance-card { background: #fff; border-radius: 1.25rem; box-shadow: 0 4px 24px 0 rgba(44,62,80,.08); padding: 2.5rem; text-align: center; }
+    .action-button { border: none; border-radius: 0.75rem; padding: 1.4rem 1rem; font-size: 1.07rem; font-weight: 500; width: 100%; margin-bottom: 5px; transition: all 0.2s; }
+    .action-button i { font-size: 2rem; display: block; margin-bottom: 0.6rem; }
     .btn-clock-in { background: #e8fcec; color: #2ecc71;}
     .btn-clock-in:hover:not(:disabled) { background: #2ecc71; color: #fff; }
     .btn-clock-out { background: #fdeaea; color: #e74c3c;}
     .btn-clock-out:hover:not(:disabled) { background: #e74c3c; color: #fff; }
     .action-button:disabled { background: #f2f2f2; color: #b5b5b5;}
-    .clock-card {
-        background: linear-gradient(135deg,#5e72e4 60%,#a0aec0 100%);
-        color: #fff;
-        border-radius: 1.25rem;
-        padding: 2.2rem 1.3rem;
-        text-align: center;
-        box-shadow: 0 4px 24px 0 rgba(44,62,80,.11);
-        margin-bottom: 1.5rem;
-    }
-    .live-clock {
-        font-size: 2.6rem;
-        font-weight: 700;
-        letter-spacing: 2px;
-    }
-    .live-date {
-        font-size: 1.1rem;
-        opacity: 0.9;
-        margin-top: 0.3rem;
-    }
+    .clock-card { background: linear-gradient(135deg,#5e72e4 60%,#a0aec0 100%); color: #fff; border-radius: 1.25rem; padding: 2.2rem 1.3rem; text-align: center; box-shadow: 0 4px 24px 0 rgba(44,62,80,.11); margin-bottom: 1.5rem; }
+    .live-clock { font-size: 2.6rem; font-weight: 700; letter-spacing: 2px; }
+    .live-date { font-size: 1.1rem; opacity: 0.9; margin-top: 0.3rem; }
 </style>
 
 <div class="main-content">
     <div class="container-fluid">
         <div class="dashboard-header mb-4 mt-3">
-            <h1 style="font-weight: 700;">¡Hola, <?php echo htmlspecialchars(explode(' ', $username)[0]); ?>!</h1>
+            <h1 style="font-weight: 700;">¡Hola, <?= htmlspecialchars(explode(' ', $username)[0]); ?>!</h1>
             <div class="text-muted" style="font-size: 1.13rem;">Bienvenido a tu panel de colaborador.</div>
         </div>
         <div class="row justify-content-center g-4 align-items-stretch">

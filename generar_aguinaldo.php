@@ -9,6 +9,8 @@ require_once 'db.php';
 $mensaje = '';
 $tipoMensaje = 'info';
 $resultados_generados = [];
+$detalles_aguinaldo = []; // Nuevo arreglo para detalles por colaborador
+
 // El año seleccionado ahora será siempre el año actual.
 $anio_seleccionado = date('Y');
 
@@ -67,10 +69,29 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generar']) && !$ya_gen
     while ($row = $result_salarios->fetch_assoc()) {
         $aguinaldo_calculado = $row['total_salarios'] / 12;
         if ($aguinaldo_calculado > 0) {
+            // ---- Agregar detalles individuales por colaborador ----
+            // Detallar salarios mensuales usados para el cálculo
+            $detalle_mensual = [];
+            $sql_detalle = "SELECT DATE_FORMAT(fecha_generacion, '%Y-%m') as mes, SUM(salario_bruto) as total_mes
+                            FROM planillas 
+                            WHERE id_colaborador_fk = ? AND fecha_generacion BETWEEN ? AND ?
+                            GROUP BY mes
+                            ORDER BY mes";
+            $stmt_det = $conn->prepare($sql_detalle);
+            $stmt_det->bind_param("iss", $row['id_colaborador_fk'], $fecha_inicio, $fecha_fin);
+            $stmt_det->execute();
+            $res_det = $stmt_det->get_result();
+            while ($fila = $res_det->fetch_assoc()) {
+                $detalle_mensual[] = $fila;
+            }
+            $stmt_det->close();
+
             $aguinaldos_a_insertar[] = [
                 'id_colaborador' => $row['id_colaborador_fk'],
                 'nombre_completo' => $row['Nombre'] . ' ' . $row['Apellido1'],
-                'monto' => $aguinaldo_calculado
+                'monto' => $aguinaldo_calculado,
+                'total_salarios' => $row['total_salarios'],
+                'detalle_mensual' => $detalle_mensual
             ];
         }
     }
@@ -124,7 +145,7 @@ $conn->close();
 .gen-agu-card {
     background: #fff;
     border-radius: 1.5rem;
-    max-width: 800px;
+    max-width: 950px;
     margin: 3rem auto;
     box-shadow: 0 6px 25px rgba(0,0,0,0.08);
     padding: 2.5rem;
@@ -137,8 +158,10 @@ $conn->close();
             <i class="bi bi-calculator-fill text-primary" style="font-size: 4rem; margin-bottom: 1rem;"></i>
             <h2 class="card-title" style="font-weight: 700;">Generar Aguinaldos</h2>
             <p class="text-muted">
-                Este módulo calculará el aguinaldo para el año en curso (<?php echo $anio_seleccionado; ?>).
-                El sistema utilizará los salarios desde el 1 de diciembre del año anterior hasta el 30 de noviembre actual.
+                El cálculo del aguinaldo se realiza según la Ley 2412 de Costa Rica:<br>
+                <b>Período considerado:</b> <span class="text-primary"><?= date('d/m/Y', strtotime(($anio_seleccionado-1).'-12-01')) ?></span> al
+                <span class="text-primary"><?= date('d/m/Y', strtotime($anio_seleccionado.'-11-30')) ?></span>.<br>
+                <b>Fórmula:</b> Suma de salarios brutos del período / 12 = Aguinaldo
             </p>
         </div>
         
@@ -165,20 +188,34 @@ $conn->close();
         
         <?php if (!empty($resultados_generados)): ?>
             <div class="mt-5">
-                <h4 class="text-center mb-3">Resultados de la Generación de Aguinaldo <?= $anio_seleccionado ?></h4>
+                <h4 class="text-center mb-3">Detalle del Aguinaldo Generado para <?= $anio_seleccionado ?></h4>
                 <div class="table-responsive">
-                    <table class="table table-striped table-hover">
+                    <table class="table table-bordered table-striped table-hover">
                         <thead class="table-light">
                             <tr>
                                 <th>Colaborador</th>
-                                <th class="text-end">Monto Calculado</th>
+                                <th class="text-end">Total Salarios Brutos</th>
+                                <th class="text-end">Aguinaldo Calculado</th>
+                                <th>Detalle Mensual</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($resultados_generados as $resultado): ?>
                             <tr>
                                 <td><?= htmlspecialchars($resultado['nombre_completo']) ?></td>
-                                <td class="text-end">₡<?= number_format($resultado['monto'], 2) ?></td>
+                                <td class="text-end">₡<?= number_format($resultado['total_salarios'], 2) ?></td>
+                                <td class="text-end fw-bold">₡<?= number_format($resultado['monto'], 2) ?></td>
+                                <td>
+                                    <?php if (!empty($resultado['detalle_mensual'])): ?>
+                                        <ul style="padding-left:16px;margin-bottom:0;">
+                                            <?php foreach($resultado['detalle_mensual'] as $dm): ?>
+                                                <li><?= htmlspecialchars($dm['mes']) ?>: ₡<?= number_format($dm['total_mes'], 2) ?></li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    <?php else: ?>
+                                        <span class="text-muted">Sin detalle</span>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                             <?php endforeach; ?>
                         </tbody>

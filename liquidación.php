@@ -58,7 +58,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_id'])) {
     }
 }
 
-
 // --- Lógica para Guardar la Liquidación ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_liq'])) {
     $id_colaborador = intval($_POST['colaborador']);
@@ -98,7 +97,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['guardar_liq'])) {
     }
 }
 
-
 // Obtener colaboradores y verificar si ya tienen liquidación
 $colaboradores = [];
 $liquidaciones_existentes = array_column($conn->query("SELECT id_colaborador_fk FROM liquidaciones")->fetch_all(MYSQLI_ASSOC), 'id_colaborador_fk');
@@ -128,7 +126,8 @@ while($row = $res_colaboradores->fetch_assoc()){
 }
 $stmt_colaboradores->close();
 
-
+// --- CALCULAR DÍAS VACACIONES DISPONIBLES PARA LIQUIDACIÓN ---
+$dias_vacaciones_pendientes = 0;
 if (isset($_GET['colaborador']) && !empty($_GET['colaborador'])) {
     $idc = intval($_GET['colaborador']);
     foreach ($colaboradores as $c) {
@@ -159,13 +158,30 @@ if (isset($_GET['colaborador']) && !empty($_GET['colaborador'])) {
             $stmt_ag->execute();
             $aguinaldo_acumulado = ($stmt_ag->get_result()->fetch_assoc()['total_salarios'] ?? 0) / 12;
             $stmt_ag->close();
-            
+
+            // CALCULAR VACACIONES PENDIENTES
+            $fecha_ingreso = $colaborador_seleccionado['fecha_ingreso'];
+            $dias_trabajados = (strtotime($fecha_salida) - strtotime($fecha_ingreso)) / 86400;
+            $meses_trabajados = $dias_trabajados / 30.417;
+            $dias_generados = floor($meses_trabajados);
+
+            $dias_tomados = 0;
+            $stmt_vac = $conn->prepare("SELECT SUM(dias) as total_tomados FROM vacaciones WHERE id_colaborador_fk = ?");
+            $stmt_vac->bind_param("i", $colaborador_seleccionado['idColaborador']);
+            $stmt_vac->execute();
+            $res_vac = $stmt_vac->get_result();
+            if($row_vac = $res_vac->fetch_assoc()) {
+                $dias_tomados = floatval($row_vac['total_tomados']);
+            }
+            $stmt_vac->close();
+
+            $dias_vacaciones_pendientes = max(0, $dias_generados - $dias_tomados);
             break;
         }
     }
 }
 
-function calcular_liquidacion_cr($salario_promedio, $fecha_ingreso, $fecha_salida, $motivo, $aguinaldo_proporcional) {
+function calcular_liquidacion_cr($salario_promedio, $fecha_ingreso, $fecha_salida, $motivo, $aguinaldo_proporcional, $dias_vacaciones_pendientes = 0) {
     if (!$salario_promedio || empty($fecha_ingreso) || empty($fecha_salida)) return ['dias_laborados' => 0, 'preaviso' => 0, 'cesantia' => 0, 'vacaciones' => 0, 'aguinaldo' => 0, 'desglose_cesantia' => []];
     $dias_laborados = (strtotime($fecha_salida) - strtotime($fecha_ingreso)) / 86400;
     $meses_laborados = $dias_laborados / 30.417; 
@@ -198,8 +214,16 @@ function calcular_liquidacion_cr($salario_promedio, $fecha_ingreso, $fecha_salid
         }
         $cesantia = $dias_cesantia_total * $salario_diario;
     }
-    $vacaciones = ($meses_laborados * 1) * $salario_diario;
-    return [ 'dias_laborados' => round($dias_laborados), 'preaviso' => round($preaviso, 2), 'cesantia' => round($cesantia, 2), 'vacaciones' => round($vacaciones, 2), 'aguinaldo' => round($aguinaldo_proporcional, 2), 'desglose_cesantia' => $desglose_cesantia ];
+    // Usar días pendientes reales para vacaciones
+    $vacaciones = round($dias_vacaciones_pendientes * $salario_diario, 2);
+    return [ 
+        'dias_laborados' => round($dias_laborados), 
+        'preaviso' => round($preaviso, 2), 
+        'cesantia' => round($cesantia, 2), 
+        'vacaciones' => $vacaciones, 
+        'aguinaldo' => round($aguinaldo_proporcional, 2), 
+        'desglose_cesantia' => $desglose_cesantia 
+    ];
 }
 
 $historial_liquidaciones = $conn->query("SELECT l.idLiquidacion, l.fecha_liquidacion, l.monto_neto, p.Nombre, p.Apellido1 FROM liquidaciones l JOIN colaborador c ON l.id_colaborador_fk = c.idColaborador JOIN persona p ON c.id_persona_fk = p.idPersona ORDER BY l.fecha_liquidacion DESC")->fetch_all(MYSQLI_ASSOC);
@@ -255,7 +279,14 @@ $historial_liquidaciones = $conn->query("SELECT l.idLiquidacion, l.fecha_liquida
                 <?php if ($colaborador_seleccionado && !$colaborador_seleccionado['liquidado']): 
                     $motivo = $_GET['motivo'] ?? 'Renuncia';
                     $fecha_salida_form = $_GET['fecha_salida'] ?? date('Y-m-d');
-                    $sug = calcular_liquidacion_cr($salario_promedio_ult_6_meses, $colaborador_seleccionado['fecha_ingreso'], $fecha_salida_form, $motivo, $aguinaldo_acumulado);
+                    $sug = calcular_liquidacion_cr(
+                        $salario_promedio_ult_6_meses,
+                        $colaborador_seleccionado['fecha_ingreso'],
+                        $fecha_salida_form,
+                        $motivo,
+                        $aguinaldo_acumulado,
+                        $dias_vacaciones_pendientes // Nuevo cálculo correcto
+                    );
                     $antiguedad = date_diff(new DateTime($colaborador_seleccionado['fecha_ingreso']), new DateTime($fecha_salida_form));
                 ?>
                 <form method="post" id="liqForm">
@@ -274,6 +305,7 @@ $historial_liquidaciones = $conn->query("SELECT l.idLiquidacion, l.fecha_liquida
                             <div class="col-sm-6 mb-2"><span class="data-label">Fecha de Ingreso:</span> <span class="data-value"><?= date("d/m/Y", strtotime($colaborador_seleccionado['fecha_ingreso'])) ?></span></div>
                             <div class="col-sm-6 mb-2"><span class="data-label">Antigüedad:</span> <span class="data-value"><?= $antiguedad->y ?>a, <?= $antiguedad->m ?>m, <?= $antiguedad->d ?>d</span></div>
                             <div class="col-sm-12 mb-2"><span class="data-label">Salario Promedio (últimos 6 meses):</span> <span class="data-value">CRC <?= number_format($salario_promedio_ult_6_meses, 2) ?></span></div>
+                            <div class="col-sm-12 mb-2"><span class="data-label">Vacaciones disponibles para liquidar:</span> <span class="data-value"><?= $dias_vacaciones_pendientes ?> días</span></div>
                         </div>
                     </div>
 
@@ -303,7 +335,7 @@ $historial_liquidaciones = $conn->query("SELECT l.idLiquidacion, l.fecha_liquida
                             <tr class="table-light"><td class="ps-4"><small>Por <?= htmlspecialchars($desglose['anio']) ?></small></td><td class="text-end"><small>+ CRC <?= number_format($desglose['monto'], 2) ?></small></td></tr>
                         <?php endforeach; ?>
                         <tr>
-                            <th>Vacaciones <i class="bi bi-info-circle-fill info-btn" data-bs-toggle="popover" title="Vacaciones (Art. 153)" data-bs-content="Pago de los días de vacaciones acumulados y no disfrutados por el colaborador. Corresponde 1 día por cada mes laborado."></i></th>
+                            <th>Vacaciones <i class="bi bi-info-circle-fill info-btn" data-bs-toggle="popover" title="Vacaciones (Art. 153)" data-bs-content="Pago de los días de vacaciones acumulados y no disfrutados por el colaborador. Corresponde 1 día por cada mes laborado menos días ya tomados."></i></th>
                             <td class="text-end">CRC <?= number_format($sug['vacaciones'], 2) ?></td>
                         </tr>
                         <tr>
