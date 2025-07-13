@@ -27,23 +27,30 @@ if (isset($_GET['toggle_id'])) {
         $stmt_update->close();
         header("Location: personas.php");
         exit;
-    } else {
-        $message = 'Error: No se puede determinar el colaborador a actualizar.';
-        $message_type = 'danger';
     }
     $stmt->close();
 }
 
-// --- ELIMINACIÓN SEGURA Y COMPLETA ---
+// --- LÓGICA DE BORRADO PERMANENTE CORREGIDA ---
 if (isset($_POST['delete_id'])) {
+    // Solo Admin puede borrar permanentemente
+    if ($_SESSION['rol'] != 1) {
+        $_SESSION['flash_message'] = ['type' => 'danger', 'message' => 'No tienes permiso para realizar esta acción.'];
+        header('Location: personas.php');
+        exit;
+    }
+    
     $idPersona = intval($_POST['delete_id']);
     $conn->begin_transaction();
     try {
+        // Obtenemos los IDs de colaborador asociados a la persona
         $colabs = [];
         $resColab = $conn->query("SELECT idColaborador FROM colaborador WHERE id_persona_fk = $idPersona");
         while ($colab = $resColab->fetch_assoc()) {
             $colabs[] = $colab['idColaborador'];
         }
+
+        // Si existen colaboradores, borramos todas sus dependencias
         if (count($colabs) > 0) {
             $colabs_imploded = implode(',', $colabs);
             $conn->query("UPDATE colaborador SET id_jefe_fk = 1 WHERE id_jefe_fk IN ($colabs_imploded) AND id_jefe_fk <> 1");
@@ -53,27 +60,39 @@ if (isset($_POST['delete_id'])) {
             $conn->query("DELETE FROM horas_extra WHERE Colaborador_idColaborador IN ($colabs_imploded)");
             $conn->query("DELETE FROM liquidaciones WHERE id_colaborador_fk IN ($colabs_imploded)");
             $conn->query("DELETE FROM permisos WHERE id_colaborador_fk IN ($colabs_imploded)");
+            
+            // ¡¡LÍNEA FALTANTE AÑADIDA!! Borra los detalles de deducciones ANTES que las planillas.
+            $conn->query("DELETE FROM deducciones_detalle WHERE id_colaborador_fk IN ($colabs_imploded)");
+            
             $conn->query("DELETE FROM planillas WHERE id_colaborador_fk IN ($colabs_imploded)");
             $conn->query("DELETE FROM vacaciones WHERE id_colaborador_fk IN ($colabs_imploded)");
         }
+
+        // Borramos dependencias directas de la persona
         $conn->query("DELETE FROM horas_extra WHERE Persona_idPersona = $idPersona");
         $conn->query("DELETE FROM control_de_asistencia WHERE Persona_idPersona = $idPersona");
         $conn->query("DELETE FROM persona_correos WHERE idPersona_fk = $idPersona");
         $conn->query("DELETE FROM persona_telefonos WHERE id_persona_fk = $idPersona");
         $conn->query("DELETE FROM usuario WHERE id_persona_fk = $idPersona");
+        
+        // Borramos el colaborador y finalmente la persona
         $conn->query("DELETE FROM colaborador WHERE id_persona_fk = $idPersona");
         $stmt = $conn->prepare("DELETE FROM persona WHERE idPersona = ?");
         $stmt->bind_param("i", $idPersona);
         $stmt->execute();
+        
         $conn->commit();
-        $message = 'Persona eliminada correctamente.';
+        $message = 'Persona eliminada permanentemente.';
         $message_type = 'success';
     } catch (mysqli_sql_exception $exception) {
         $conn->rollback();
-        $message = 'Error al eliminar. La persona puede tener registros asociados.';
+        // Con la corrección, no deberías volver a ver este error.
+        $message = 'Error al eliminar. La persona puede tener registros asociados. Detalle: ' . $exception->getMessage();
         $message_type = 'danger';
     }
 }
+
+// El resto del archivo permanece igual...
 
 function getIdentificacionInfo($cedula) {
     $numeroLimpio = preg_replace('/[^0-9]/', '', $cedula);
@@ -81,6 +100,12 @@ function getIdentificacionInfo($cedula) {
     if (strlen($numeroLimpio) >= 10 && strlen($numeroLimpio) <= 12) return ['tipo' => 'Residencia (DIMEX)', 'icono' => 'bi-person-badge-fill', 'color' => 'success'];
     if (preg_match('/^[A-Z0-9]+$/i', $cedula) && strlen($cedula) < 20) return ['tipo' => 'Pasaporte', 'icono' => 'bi-passport-fill', 'color' => 'info'];
     return ['tipo' => 'Otro Documento', 'icono' => 'bi-question-circle-fill', 'color' => 'secondary'];
+}
+
+if (isset($_SESSION['flash_message']) && !$message) {
+    $message = $_SESSION['flash_message']['message'];
+    $message_type = $_SESSION['flash_message']['type'];
+    unset($_SESSION['flash_message']);
 }
 
 $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamento d JOIN estado_cat e ON d.id_estado_fk = e.idEstado WHERE e.Descripcion = 'Activo'");
@@ -156,23 +181,12 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                         </thead>
                         <tbody>
                             <?php 
-                            // --- INICIO DE LA CORRECCIÓN: Consulta SQL modificada ---
-                            $sql = "SELECT
-                                        p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula,
-                                        d.nombre AS Departamento,
-                                        c.activo,
-                                        CASE
-                                            WHEN c.activo = 0 THEN 'Inactivo'
-                                            WHEN c.fecha_ingreso > CURDATE() THEN 'Pendiente'
-                                            ELSE 'Activo'
-                                        END AS EstadoCalculado
-                                    FROM
-                                        persona p
+                            $sql = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Apellido2, p.Cedula, d.nombre AS Departamento, c.activo,
+                                        CASE WHEN c.activo = 0 THEN 'Inactivo' WHEN c.fecha_ingreso > CURDATE() THEN 'Pendiente' ELSE 'Activo' END AS EstadoCalculado
+                                    FROM persona p
                                     LEFT JOIN colaborador c ON p.idPersona = c.id_persona_fk
                                     LEFT JOIN departamento d ON c.id_departamento_fk = d.idDepartamento
                                     ORDER BY p.Nombre, p.Apellido1";
-                            // --- FIN DE LA CORRECCIÓN ---
-
                             $result_personas = $conn->query($sql);
                             if ($result_personas->num_rows > 0): 
                                 while ($row = $result_personas->fetch_assoc()): ?>
@@ -192,23 +206,17 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                                         <td class="text-center">
                                             <?php
                                             $estado = htmlspecialchars($row['EstadoCalculado']);
-                                            $clase_badge = 'bg-secondary'; // Color por defecto
-                                            if ($estado == 'Activo') {
-                                                $clase_badge = 'bg-success';
-                                            } elseif ($estado == 'Inactivo') {
-                                                $clase_badge = 'bg-danger';
-                                            } elseif ($estado == 'Pendiente') {
-                                                $clase_badge = 'bg-warning text-dark';
-                                            }
+                                            $clase_badge = 'bg-secondary';
+                                            if ($estado == 'Activo') $clase_badge = 'bg-success';
+                                            elseif ($estado == 'Inactivo') $clase_badge = 'bg-danger';
+                                            elseif ($estado == 'Pendiente') $clase_badge = 'bg-warning text-dark';
                                             ?>
-                                            <span class="badge rounded-pill <?= $clase_badge; ?> status-badge">
-                                                <?= $estado; ?>
-                                            </span>
-                                            </td>
+                                            <span class="badge rounded-pill <?= $clase_badge; ?> status-badge"><?= $estado; ?></span>
+                                        </td>
                                         <td class="text-center">
                                             <a href="form_persona.php?id=<?= $row['idPersona']; ?>" class="btn btn-light btn-sm btn-action" title="Editar"><i class="bi bi-pencil-square text-primary"></i></a>
                                             <a href="personas.php?toggle_id=<?= $row['idPersona']; ?>" class="btn btn-light btn-sm btn-action" title="<?= $row['activo'] ? 'Desactivar' : 'Activar'; ?>"><i class="bi <?= $row['activo'] ? 'bi-toggle-on text-success' : 'bi-toggle-off text-muted'; ?>" style="font-size: 1.2rem;"></i></a>
-                                            <button type="button" class="btn btn-light btn-sm btn-action" title="Eliminar" onclick="confirmDelete(<?= $row['idPersona']; ?>, '<?= htmlspecialchars($row['Nombre'] . " " . $row['Apellido1']); ?>')"><i class="bi bi-trash text-danger"></i></button>
+                                            <button type="button" class="btn btn-light btn-sm btn-action" title="Eliminar Permanentemente" onclick="confirmDelete(<?= $row['idPersona']; ?>, '<?= htmlspecialchars($row['Nombre'] . " " . $row['Apellido1']); ?>')"><i class="bi bi-trash text-danger"></i></button>
                                         </td>
                                     </tr>
                                 <?php endwhile; ?>
@@ -230,7 +238,7 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title">Confirmar Eliminación</h5>
+                    <h5 class="modal-title">Confirmar Eliminación Permanente</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body"><p id="deleteModalText"></p></div>
@@ -238,7 +246,7 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                     <form id="deleteForm" method="POST" action="personas.php">
                         <input type="hidden" name="delete_id" id="delete_id_input">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-                        <button type="submit" class="btn btn-danger">Eliminar</button>
+                        <button type="submit" class="btn btn-danger">Eliminar Permanentemente</button>
                     </form>
                 </div>
             </div>
@@ -248,11 +256,9 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            // Inicializar tooltips
             var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
             tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el) });
 
-            // Lógica de búsqueda y filtrado en tiempo real
             const searchInput = document.getElementById('searchInput');
             const departmentFilter = document.getElementById('departmentFilter');
             const tableBody = document.querySelector("#personasTable tbody");
@@ -263,15 +269,12 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                 const searchText = searchInput.value.toLowerCase();
                 const departmentText = departmentFilter.value.toLowerCase();
                 let visibleRows = 0;
-
                 rows.forEach(row => {
                     const name = row.cells[0].textContent.toLowerCase();
                     const id = row.cells[1].textContent.toLowerCase();
                     const department = row.cells[2].textContent.toLowerCase();
-                    
                     const matchesSearch = name.includes(searchText) || id.includes(searchText);
                     const matchesDepartment = departmentText === "" || department.includes(departmentText);
-
                     if (matchesSearch && matchesDepartment) {
                         row.style.display = "";
                         visibleRows++;
@@ -279,7 +282,6 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
                         row.style.display = "none";
                     }
                 });
-
                 noResultsMessage.style.display = visibleRows === 0 ? "block" : "none";
             }
             
@@ -287,7 +289,6 @@ $departamentos = $conn->query("SELECT d.idDepartamento, d.nombre FROM departamen
             departmentFilter.addEventListener('change', filterTable);
         });
 
-        // Modal de confirmación de borrado
         function confirmDelete(id, nombre) {
             document.getElementById('delete_id_input').value = id;
             document.getElementById('deleteModalText').innerHTML = `¿Estás seguro de que deseas eliminar a <b>${nombre}</b>? <br><span class='text-danger fw-bold'>Esta acción es irreversible y eliminará todos sus datos.</span>`;
