@@ -193,7 +193,8 @@ function rolName($rol) {
                 <li class="nav-item"><a class="nav-link <?= isActive(['personas.php', 'form_persona.php']) ? 'active' : '' ?>" href="personas.php"><i class="bi bi-people"></i> Empleados</a></li>
                 <li class="nav-heading">Procesos</li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['nóminas.php']) ? 'active' : '' ?>" href="nóminas.php"><i class="bi bi-calculator"></i> Planillas</a></li>
-                <li class="nav-item"><a class="nav-link <?= isActive(['gestion_solicitudes.php']) ? 'active' : '' ?>" href="gestion_solicitudes.php"><i class="bi bi-folder-check"></i> Gestión de Solicitudes</a></li>
+                 <li class="nav-item"><a class="nav-link <?= isActive(['permisos.php']) ? 'active' : '' ?>" href="permisos.php"><i class="bi bi-calendar-check"></i> Aprobar Permisos</a></li>
+                <li class="nav-item"><a class="nav-link <?= isActive(['horasextra.php']) ? 'active' : '' ?>" href="horasextra.php"><i class="bi bi-clock-history"></i> Aprobar Horas Extra</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['liquidación.php']) ? 'active' : '' ?>" href="liquidación.php"><i class="bi bi-box-arrow-left"></i> Liquidaciones</a></li>
                 <li class="nav-item"><a class="nav-link <?= isActive(['generar_aguinaldo.php']) ? 'active' : '' ?>" href="generar_aguinaldo.php"><i class="bi bi-gift"></i> Aguinaldos</a></li>
                 <li class="nav-heading">Análisis</li>

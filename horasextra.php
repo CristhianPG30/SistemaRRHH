@@ -29,7 +29,7 @@ $mensaje_tipo = '';
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['aprobar'])) {
         $idHorasExtra = intval($_POST['idHorasExtra']);
-        $sqlUpdate = "UPDATE horas_extra SET estado = 'Aprobada', Observaciones = 'Aprobada por la jefatura el ".date('d-m-Y H:i')."' WHERE idPermisos = ?";
+        $sqlUpdate = "UPDATE horas_extra SET estado = 'Aprobada', Observaciones = 'Aprobada por la jefatura' WHERE idPermisos = ?";
         $stmt = $conn->prepare($sqlUpdate);
         $stmt->bind_param("i", $idHorasExtra);
         if ($stmt->execute()) {

@@ -87,7 +87,6 @@ function calcularDeduccionesDeLey($salario_bruto, $conn)
     return $deducciones;
 }
 
-// --- CORRECCIÓN #1: La función ahora devuelve un array con el desglose ---
 function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
 {
     $tax_config_path = __DIR__ . "/js/tramos_impuesto_renta.json";
@@ -159,33 +158,32 @@ function obtenerPlanilla($anio, $mes, $conn)
         $dias_laborales_transcurridos = $dias_laborales_del_mes;
     } else {
         foreach ($dias_laborales_del_mes as $dia) {
-            if ($dia <= $fecha_actual_str) {
-                $dias_laborales_transcurridos[] = $dia;
-            }
+            if ($dia <= $fecha_actual_str) $dias_laborales_transcurridos[] = $dia;
         }
     }
+
+    $permisos_con_goce = ['vacaciones', 'luto', 'maternidad', 'paternidad', 'día libre', 'incapacidad', 'médico'];
 
     while ($colaborador = $result_colaboradores->fetch_assoc()) {
         $idColaborador = $colaborador['idColaborador'];
         $salario_base = floatval($colaborador['salario_base']);
         $salario_diario = $salario_base / 30;
-        $salario_hora = $salario_base / 240;
 
+        // Obtener asistencias
         $asistencias_del_mes = [];
         $stmt_asist = $conn->prepare("SELECT DISTINCT DATE(Fecha) as Fecha FROM control_de_asistencia WHERE Persona_idPersona = ? AND MONTH(Fecha) = ? AND YEAR(Fecha) = ?");
         $stmt_asist->bind_param("iii", $colaborador['idPersona'], $mes, $anio);
         $stmt_asist->execute();
         $res_asist = $stmt_asist->get_result();
-        while ($row = $res_asist->fetch_assoc()) {
-            $asistencias_del_mes[] = $row['Fecha'];
-        }
+        while($row = $res_asist->fetch_assoc()) { $asistencias_del_mes[] = $row['Fecha']; }
         $stmt_asist->close();
 
-        $permisos_pagados = [];
-        $permisos_del_mes_por_tipo = [];
-        $deduccion_permisos_sin_goce = 0;
+        // Obtener y procesar permisos
+        $dias_permiso_con_goce = [];
+        $dias_permiso_sin_goce = [];
+        $desglose_permisos = [];
         
-        $sql_permisos = "SELECT p.fecha_inicio, p.fecha_fin, p.hora_inicio, p.hora_fin, tpc.Descripcion AS tipo_permiso 
+        $sql_permisos = "SELECT p.fecha_inicio, p.fecha_fin, tpc.Descripcion AS tipo_permiso 
                          FROM permisos p
                          JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
                          WHERE p.id_colaborador_fk = ? AND p.id_estado_fk = 4";
@@ -193,89 +191,76 @@ function obtenerPlanilla($anio, $mes, $conn)
         $stmt_perm->bind_param("i", $idColaborador);
         $stmt_perm->execute();
         $res_perm = $stmt_perm->get_result();
-        while ($row = $res_perm->fetch_assoc()) {
-            $tipo = $row['tipo_permiso'];
-            $es_pagado = in_array(strtolower($tipo), ['vacaciones', 'luto', 'maternidad', 'paternidad', 'día libre', 'incapacidad']);
+        while($row_perm = $res_perm->fetch_assoc()) {
+            $inicio = new DateTime($row_perm['fecha_inicio']);
+            $fin = new DateTime($row_perm['fecha_fin']);
+            $fin->modify('+1 day');
+            $rango = new DatePeriod($inicio, new DateInterval('P1D'), $fin);
             
-            if ($row['hora_inicio'] && $row['hora_fin']) {
-                if (!$es_pagado) {
-                    $horas = (strtotime($row['hora_fin']) - strtotime($row['hora_inicio'])) / 3600;
-                    $deduccion_permisos_sin_goce += $horas * $salario_hora;
-                }
-            } else {
-                $inicio = new DateTime($row['fecha_inicio']);
-                $fin = new DateTime($row['fecha_fin']);
-                $fin->modify('+1 day');
-                $rango = new DatePeriod($inicio, new DateInterval('P1D'), $fin);
-                foreach ($rango as $fecha) {
-                    if ($fecha->format('n') == $mes) {
-                        $fecha_str = $fecha->format('Y-m-d');
-                        if ($es_pagado) {
-                            $permisos_pagados[] = $fecha_str;
-                            $permisos_del_mes_por_tipo[$tipo] = ($permisos_del_mes_por_tipo[$tipo] ?? 0) + 1;
-                        }
+            foreach($rango as $fecha) {
+                $fecha_str = $fecha->format('Y-m-d');
+                if ($fecha->format('n') == $mes && date('N', strtotime($fecha_str)) < 6) {
+                    $tipo = $row_perm['tipo_permiso'];
+                    $desglose_permisos[$tipo] = ($desglose_permisos[$tipo] ?? 0) + 1;
+                    if (in_array(strtolower($tipo), $permisos_con_goce)) {
+                        $dias_permiso_con_goce[] = $fecha_str;
+                    } else {
+                        $dias_permiso_sin_goce[] = $fecha_str;
                     }
                 }
             }
         }
         $stmt_perm->close();
 
-        $dias_asistencia_efectivos = array_intersect($asistencias_del_mes, $dias_laborales_del_mes);
-        $dias_pagables_raw = array_unique(array_merge($dias_asistencia_efectivos, $permisos_pagados));
-        $numero_dias_a_pagar = count($dias_pagables_raw);
-        $dias_ausencia = count($dias_laborales_transcurridos) - $numero_dias_a_pagar;
+        $dias_cubiertos = array_unique(array_merge($asistencias_del_mes, $dias_permiso_con_goce, $dias_permiso_sin_goce));
+        $dias_ausencia_injustificada = count(array_diff($dias_laborales_transcurridos, $dias_cubiertos));
         
-        $deduccion_por_ausencia = $dias_ausencia > 0 ? $dias_ausencia * $salario_diario : 0;
-        $pago_ordinario = $salario_base - $deduccion_por_ausencia;
+        $desglose_ajustes_negativos = [];
+        if ($dias_ausencia_injustificada > 0) {
+            $desglose_ajustes_negativos[] = ['descripcion' => 'Ausencias Injustificadas (' . $dias_ausencia_injustificada . ' días)', 'monto' => $dias_ausencia_injustificada * $salario_diario];
+        }
+        foreach($desglose_permisos as $tipo => $dias) {
+            if (!in_array(strtolower($tipo), $permisos_con_goce) && $dias > 0) {
+                $desglose_ajustes_negativos[] = ['descripcion' => 'Permiso s/g: ' . $tipo . ' (' . $dias . ' días)', 'monto' => $dias * $salario_diario];
+            }
+        }
+        
+        $total_deducciones_previas = array_sum(array_column($desglose_ajustes_negativos, 'monto'));
+        $pago_ordinario = $salario_base - $total_deducciones_previas;
 
         $stmt_he = $conn->prepare("SELECT SUM(cantidad_horas) AS total_horas FROM horas_extra WHERE estado = 'Aprobada' AND Colaborador_idColaborador = ? AND MONTH(Fecha) = ? AND YEAR(Fecha) = ?");
-        $stmt_he->bind_param("iii", $idColaborador, $mes, $anio);
-        $stmt_he->execute();
-        $total_horas_extra = floatval($stmt_he->get_result()->fetch_assoc()['total_horas'] ?? 0);
-        $stmt_he->close();
+        $stmt_he->bind_param("iii", $idColaborador, $mes, $anio); $stmt_he->execute();
+        $total_horas_extra = floatval($stmt_he->get_result()->fetch_assoc()['total_horas'] ?? 0); $stmt_he->close();
         $pago_horas_extra = $total_horas_extra * (($salario_base / 240) * 1.5);
-
+        
         $salario_bruto_calculado = $pago_ordinario + $pago_horas_extra;
         $id_categoria = determinarCategoriaSalarial($salario_bruto_calculado, $categorias_salariales);
         
         $deducciones_ley = calcularDeduccionesDeLey($salario_bruto_calculado, $conn);
         $ccss_deduction_amount = 0;
         foreach ($deducciones_ley['detalles'] as $ded) {
-            if (stripos($ded['descripcion'], 'CCSS') !== false) {
-                $ccss_deduction_amount = $ded['monto'];
-                break;
-            }
+            if (stripos($ded['descripcion'], 'CCSS') !== false) { $ccss_deduction_amount = $ded['monto']; break; }
         }
-        
         $salario_imponible_renta = $salario_bruto_calculado - $ccss_deduction_amount;
-        
-        // --- CORRECCIÓN #2: Se llama a la función de renta y se guarda el desglose ---
         $calculo_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos']);
-        $impuesto_renta = $calculo_renta['total']; 
+        $impuesto_renta = $calculo_renta['total'];
+        
+        $total_deducciones_legales = $deducciones_ley['total'] + $impuesto_renta;
+        $salario_neto = $salario_bruto_calculado - $total_deducciones_legales;
+        
+        $deducciones_legales_detalles = $deducciones_ley['detalles'];
+        $deducciones_legales_detalles[] = ['id' => 99, 'descripcion' => 'Impuesto sobre la Renta', 'monto' => $impuesto_renta, 'porcentaje' => 0];
 
-        if($deduccion_permisos_sin_goce > 0){
-            $deducciones_ley['detalles'][] = ['id' => 100, 'descripcion' => 'Permisos sin goce', 'monto' => $deduccion_permisos_sin_goce, 'porcentaje' => 0];
-        }
-        
-        $total_deducciones_final = $deducciones_ley['total'] + $impuesto_renta + $deduccion_permisos_sin_goce;
-        $salario_neto = $salario_bruto_calculado - $total_deducciones_final;
-        
         $planilla[] = array_merge($colaborador, [
             'id_categoria_salarial_fk' => $id_categoria,
             'salario_bruto_calculado' => $salario_bruto_calculado,
-            'salario_imponible_renta' => $salario_imponible_renta,
             'total_horas_extra' => $total_horas_extra,
             'pago_horas_extra' => $pago_horas_extra,
-            'dias_pagados' => $numero_dias_a_pagar,
-            'dias_ausencia' => $dias_ausencia,
-            'deduccion_ausencia' => $deduccion_por_ausencia,
-            'desglose_dias' => [
-                'asistencia' => count($dias_asistencia_efectivos),
-                'permisos' => $permisos_del_mes_por_tipo
-            ],
-            'deducciones_detalles' => $deducciones_ley['detalles'],
+            'desglose_permisos_pagados' => $desglose_permisos,
+            'desglose_ajustes_negativos' => $desglose_ajustes_negativos,
+            'deducciones_legales_detalles' => $deducciones_legales_detalles,
             'desglose_renta' => $calculo_renta,
-            'total_deducciones' => $total_deducciones_final,
+            'total_deducciones' => $total_deducciones_legales,
             'salario_neto' => $salario_neto
         ]);
     }
@@ -303,8 +288,8 @@ function guardarPlanilla($planilla_data, $anio, $mes, $conn)
         foreach ($planilla_data as $col) {
             $stmt_planilla->bind_param("isidddd", $col['idColaborador'], $fecha_generacion, $col['id_categoria_salarial_fk'], $col['salario_bruto_calculado'], $col['pago_horas_extra'], $col['total_deducciones'], $col['salario_neto']);
             $stmt_planilla->execute();
-            foreach ($col['deducciones_detalles'] as $deduccion) {
-                if ($deduccion['id'] == 99 || $deduccion['id'] == 100) {
+            foreach ($col['deducciones_legales_detalles'] as $deduccion) {
+                if ($deduccion['id'] >= 99) { // No guardar Renta ni otros ajustes en esta tabla
                     continue;
                 }
                 if ($deduccion['monto'] > 0) {
@@ -451,90 +436,62 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
         </div>
     </main>
     
-    <?php foreach ($planilla_previsualizada as $col): ?>
+    <?php 
+    $permisos_con_goce_modal = ['vacaciones', 'luto', 'maternidad', 'paternidad', 'día libre', 'incapacidad', 'médico'];
+    foreach ($planilla_previsualizada as $col): ?>
     <div class="modal fade" id="detalleModal<?= $col['idColaborador'] ?>" tabindex="-1">
         <div class="modal-dialog modal-lg modal-dialog-centered">
             <div class="modal-content" style="border-radius: 1rem;">
                 <div class="modal-header bg-light">
-                    <h5 class="modal-title text-primary fw-bold">
-                        <i class="bi bi-person-badge-fill me-2"></i>
-                        Detalle Salarial: <?= htmlspecialchars($col['Nombre'] . ' ' . $col['Apellido1']) ?>
-                    </h5>
+                    <h5 class="modal-title text-primary fw-bold"><i class="bi bi-person-badge-fill me-2"></i>Detalle Salarial: <?= htmlspecialchars($col['Nombre'] . ' ' . $col['Apellido1']) ?></h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body p-4">
                     <div class="p-3 mb-3" style="background-color: #f8f9fa; border-radius: .5rem;">
                         <div class="row">
-                            <div class="col-6">
-                                <small class="text-muted">SALARIO BASE</small>
-                                <div class="fs-5 fw-bold">₡<?= number_format($col['salario_base'], 2) ?></div>
-                            </div>
-                            <div class="col-6">
-                                <small class="text-muted">SALARIO BRUTO AJUSTADO</small>
-                                <div class="fs-5 fw-bold">₡<?= number_format($col['salario_bruto_calculado'], 2) ?></div>
-                            </div>
+                            <div class="col-6"><small class="text-muted">SALARIO BASE</small><div class="fs-5 fw-bold">₡<?= number_format($col['salario_base'], 2) ?></div></div>
+                            <div class="col-6"><small class="text-muted">SALARIO BRUTO DEVENGADO</small><div class="fs-5 fw-bold">₡<?= number_format($col['salario_bruto_calculado'], 2) ?></div></div>
                         </div>
                     </div>
 
                     <div class="row g-4">
                         <div class="col-md-6">
-                            <h6 class="text-success fw-bold"><i class="bi bi-plus-circle-fill me-2"></i>INGRESOS ADICIONALES</h6>
+                            <h6 class="text-success fw-bold"><i class="bi bi-plus-circle-fill me-2"></i>INGRESOS Y PERMISOS CON GOCE</h6>
                             <ul class="list-group list-group-flush">
-                                <li class="list-group-item d-flex justify-content-between">
-                                    <span>Pago Horas Extra (<?= number_format($col['total_horas_extra'], 2) ?>h)</span>
-                                    <strong>+ ₡<?= number_format($col['pago_horas_extra'], 2) ?></strong>
-                                </li>
+                                <li class="list-group-item d-flex justify-content-between"><span>Pago Horas Extra (<?= number_format($col['total_horas_extra'], 2) ?>h)</span><strong>+ ₡<?= number_format($col['pago_horas_extra'], 2) ?></strong></li>
+                                <?php foreach($col['desglose_permisos_pagados'] as $tipo => $dias): if(in_array(strtolower($tipo), $permisos_con_goce_modal) && $dias > 0): ?>
+                                    <li class="list-group-item d-flex justify-content-between"><span>Permiso: <?= htmlspecialchars($tipo) ?> (<?= $dias ?> días)</span><strong class="text-muted">Informativo</strong></li>
+                                <?php endif; endforeach; ?>
                             </ul>
                         </div>
                         <div class="col-md-6">
-                            <h6 class="text-danger fw-bold"><i class="bi bi-dash-circle-fill me-2"></i>DEDUCCIONES</h6>
-                            <ul class="list-group list-group-flush">
-                                <?php if($col['dias_ausencia'] > 0): ?>
-                                    <li class="list-group-item d-flex justify-content-between">
-                                        <span>Ausencias (<?= $col['dias_ausencia'] ?> días)</span>
-                                        <strong>- ₡<?= number_format($col['deduccion_ausencia'], 2) ?></strong>
-                                    </li>
+                            <h6 class="text-danger fw-bold"><i class="bi bi-dash-circle-fill me-2"></i>AJUSTES Y DEDUCCIONES</h6>
+                             <ul class="list-group list-group-flush">
+                                <?php if(empty($col['desglose_ajustes_negativos'])): ?>
+                                     <li class="list-group-item d-flex justify-content-between"><span>Sin ajustes por ausencias</span><strong class="text-muted">- ₡0.00</strong></li>
+                                <?php else: ?>
+                                    <?php foreach($col['desglose_ajustes_negativos'] as $ajuste): ?>
+                                        <li class="list-group-item d-flex justify-content-between"><span><?= htmlspecialchars($ajuste['descripcion']) ?></span><strong>- ₡<?= number_format($ajuste['monto'], 2) ?></strong></li>
+                                    <?php endforeach; ?>
                                 <?php endif; ?>
-                                <?php foreach ($col['deducciones_detalles'] as $deduccion): ?>
+                                <hr class="my-2">
+                                <li class="list-group-item disabled"><small>DEDUCCIONES DE LEY (SOBRE BRUTO DEVENGADO)</small></li>
+                                <?php foreach ($col['deducciones_legales_detalles'] as $deduccion): ?>
                                     <li class="list-group-item d-flex justify-content-between">
-                                        <span><?= htmlspecialchars($deduccion['descripcion']) ?>
-                                            <?php if($deduccion['porcentaje'] > 0): ?>
-                                                <small class="text-muted">(<?= $deduccion['porcentaje'] ?>%)</small>
-                                            <?php endif; ?>
-                                        </span> 
+                                        <span><?= htmlspecialchars($deduccion['descripcion']) ?><?php if(isset($deduccion['porcentaje']) && $deduccion['porcentaje'] > 0): ?><small class="text-muted"> (<?= $deduccion['porcentaje'] ?>%)</small><?php endif; ?></span> 
                                         <strong>- ₡<?= number_format($deduccion['monto'], 2) ?></strong>
                                     </li>
                                 <?php endforeach; ?>
-                                
-                                <li class="list-group-item">
-                                    <div class="d-flex justify-content-between">
-                                        <span>Impuesto sobre la Renta</span>
-                                        <strong>- ₡<?= number_format($col['desglose_renta']['total'], 2) ?></strong>
-                                    </div>
-                                    <div class="ps-3 small text-muted">
-                                        <div>Base para Renta: ₡<?= number_format($col['salario_imponible_renta'], 2) ?></div>
-                                        <div>Cálculo Bruto (Tramo <?= $col['desglose_renta']['tramo_aplicado'] ?>): ₡<?= number_format($col['desglose_renta']['bruto'], 2) ?></div>
-                                        <?php if ($col['desglose_renta']['creditos'] > 0): ?>
-                                            <div>Créditos Fiscales (<?= $col['cantidad_hijos'] ?> hijos): - ₡<?= number_format($col['desglose_renta']['creditos'], 2) ?></div>
-                                        <?php endif; ?>
-                                    </div>
-                                </li>
                             </ul>
                         </div>
                     </div>
                     <hr>
                     <div class="bg-light p-3 rounded">
-                        <div class="d-flex justify-content-between text-danger">
-                            <span>Total Deducciones:</span>
-                            <span>- ₡<?= number_format($col['total_deducciones'], 2) ?></span>
-                        </div>
+                        <div class="d-flex justify-content-between text-danger"><span>Total Deducciones de Ley:</span><span>- ₡<?= number_format($col['total_deducciones'], 2) ?></span></div>
                         <hr class="my-2">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0 fw-bolder text-success">SALARIO NETO A PAGAR:</h5>
-                            <h5 class="mb-0 fw-bolder text-success">₡<?= number_format($col['salario_neto'], 2) ?></h5>
-                        </div>
+                        <div class="d-flex justify-content-between align-items-center"><h5 class="mb-0 fw-bolder text-success">SALARIO NETO A PAGAR:</h5><h5 class="mb-0 fw-bolder text-success">₡<?= number_format($col['salario_neto'], 2) ?></h5></div>
                     </div>
-                     </div>
+                </div>
             </div>
         </div>
     </div>
@@ -543,20 +500,11 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
     <div class="modal fade" id="confirmarGeneracionModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="confirmarModalLabel">Confirmar Acción</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <p id="confirmarModalText"></p>
-                    <div class="alert alert-warning" id="regenerarWarning" style="display:none;">
-                        <strong>¡Atención!</strong> Esta acción eliminará los registros anteriores de la planilla de este mes y los reemplazará con los nuevos cálculos.
-                    </div>
-                </div>
+                <div class="modal-header"><h5 class="modal-title" id="confirmarModalLabel">Confirmar Acción</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body"><p id="confirmarModalText"></p><div class="alert alert-warning" id="regenerarWarning" style="display:none;"><strong>¡Atención!</strong> Esta acción eliminará los registros anteriores de la planilla de este mes y los reemplazará con los nuevos cálculos.</div></div>
                 <div class="modal-footer">
                     <form id="generarPlanillaForm" method="POST">
-                        <input type="hidden" name="mes" value="<?= htmlspecialchars($mes_seleccionado) ?>">
-                        <input type="hidden" name="anio" value="<?= htmlspecialchars($anio_seleccionado) ?>">
+                        <input type="hidden" name="mes" value="<?= htmlspecialchars($mes_seleccionado) ?>"><input type="hidden" name="anio" value="<?= htmlspecialchars($anio_seleccionado) ?>">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                         <button type="submit" name="generar_planilla" class="btn btn-success" id="btnConfirmarGenerar">Confirmar y Generar</button>
                     </form>
