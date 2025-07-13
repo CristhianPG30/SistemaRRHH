@@ -87,10 +87,10 @@ function calcularDeduccionesDeLey($salario_bruto, $conn)
     return $deducciones;
 }
 
-function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
+function calcularImpuestoRenta($salario_imponible, $cantidad_hijos, $es_casado)
 {
     $tax_config_path = __DIR__ . "/js/tramos_impuesto_renta.json";
-    $default_return = ['total' => 0, 'bruto' => 0, 'creditos' => 0, 'tramo_aplicado' => '0%'];
+    $default_return = ['total' => 0, 'bruto' => 0, 'credito_hijos' => 0, 'credito_conyuge' => 0, 'tramo_aplicado' => '0%'];
     if (!file_exists($tax_config_path)) {
         return $default_return;
     }
@@ -98,6 +98,7 @@ function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
     $config_data = json_decode(file_get_contents($tax_config_path), true);
     $tax_brackets = $config_data['tramos'] ?? [];
     $credito_por_hijo = $config_data['creditos_fiscales']['hijo'] ?? 0;
+    $credito_por_conyuge = $config_data['creditos_fiscales']['conyuge'] ?? 0;
     
     $impuesto_calculado = 0;
     $tramo_aplicado = '0%';
@@ -113,15 +114,18 @@ function calcularImpuestoRenta($salario_imponible, $cantidad_hijos)
     }
     
     $credito_total_hijos = $cantidad_hijos * $credito_por_hijo;
-    $impuesto_final = $impuesto_calculado - $credito_total_hijos;
+    $credito_total_conyuge = $es_casado ? $credito_por_conyuge : 0;
+    $impuesto_final = $impuesto_calculado - $credito_total_hijos - $credito_total_conyuge;
     
     return [
         'total' => max(0, $impuesto_final),
         'bruto' => $impuesto_calculado,
-        'creditos' => $credito_total_hijos,
+        'credito_hijos' => $credito_total_hijos,
+        'credito_conyuge' => $credito_total_conyuge,
         'tramo_aplicado' => $tramo_aplicado
     ];
 }
+
 
 function obtenerCategoriasSalariales($conn)
 {
@@ -142,7 +146,7 @@ function obtenerPlanilla($anio, $mes, $conn)
     $categorias_salariales = obtenerCategoriasSalariales($conn);
     $dias_laborales_del_mes = calcularDiasLaborales($anio, $mes);
     
-    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, p.cantidad_hijos, c.idColaborador, c.salario_bruto as salario_base 
+    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.Cedula, p.cantidad_hijos, p.id_estado_civil_fk, c.idColaborador, c.salario_bruto as salario_base 
                           FROM colaborador c 
                           JOIN persona p ON c.id_persona_fk = p.idPersona 
                           WHERE c.activo = 1 AND c.idColaborador NOT IN (SELECT id_colaborador_fk FROM liquidaciones)";
@@ -242,7 +246,8 @@ function obtenerPlanilla($anio, $mes, $conn)
             if (stripos($ded['descripcion'], 'CCSS') !== false) { $ccss_deduction_amount = $ded['monto']; break; }
         }
         $salario_imponible_renta = $salario_bruto_calculado - $ccss_deduction_amount;
-        $calculo_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos']);
+        $es_casado = ($colaborador['id_estado_civil_fk'] == 2);
+        $calculo_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos'], $es_casado);
         $impuesto_renta = $calculo_renta['total'];
         
         $total_deducciones_legales = $deducciones_ley['total'] + $impuesto_renta;
@@ -481,6 +486,16 @@ $historial_planillas = $stmt_historial->get_result()->fetch_all(MYSQLI_ASSOC);
                                         <span><?= htmlspecialchars($deduccion['descripcion']) ?><?php if(isset($deduccion['porcentaje']) && $deduccion['porcentaje'] > 0): ?><small class="text-muted"> (<?= $deduccion['porcentaje'] ?>%)</small><?php endif; ?></span> 
                                         <strong>- ₡<?= number_format($deduccion['monto'], 2) ?></strong>
                                     </li>
+                                    <?php if ($deduccion['id'] == 99 && ($col['desglose_renta']['credito_conyuge'] > 0 || $col['desglose_renta']['credito_hijos'] > 0)): ?>
+                                        <li class="list-group-item d-flex justify-content-between ps-4" style="font-size: 0.9em; background-color: #f8f9fa;">
+                                            <span>&rdsh; Crédito fiscal por Cónyuge</span>
+                                            <strong class="text-success">+ ₡<?= number_format($col['desglose_renta']['credito_conyuge'], 2) ?></strong>
+                                        </li>
+                                        <li class="list-group-item d-flex justify-content-between ps-4" style="font-size: 0.9em; background-color: #f8f9fa;">
+                                            <span>&rdsh; Crédito fiscal por Hijos (<?= htmlspecialchars($col['cantidad_hijos']) ?>)</span>
+                                            <strong class="text-success">+ ₡<?= number_format($col['desglose_renta']['credito_hijos'], 2) ?></strong>
+                                        </li>
+                                    <?php endif; ?>
                                 <?php endforeach; ?>
                             </ul>
                         </div>
