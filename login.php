@@ -18,6 +18,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     if (empty($username) || empty($password)) {
         $errorMessage = "Por favor, ingresa tu usuario y contraseña.";
+    } elseif (strlen($username) > 24) {
+        $errorMessage = "El nombre de usuario no puede tener más de 24 caracteres.";
+    } elseif (strlen($password) > 24) {
+        $errorMessage = "La contraseña no puede tener más de 24 caracteres.";
     } else {
         // --- INICIO DE LA CORRECCIÓN: Consulta SQL modificada ---
         $sql = "SELECT 
@@ -198,12 +202,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             <form action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" method="post" novalidate>
                 <div class="mb-3">
                     <label for="username" class="form-label">Usuario</label>
-                    <input type="text" class="form-control" id="username" name="username" required>
+                    <input type="text" class="form-control" id="username" name="username" required maxlength="24">
                 </div>
                 <div class="mb-4">
                     <label for="password" class="form-label">Contraseña</label>
                     <div class="input-group">
-                        <input type="password" class="form-control" id="password" name="password" required>
+                        <input type="password" class="form-control" id="password" name="password" required maxlength="24">
                         <span class="input-group-text" id="togglePassword"><i class="bi bi-eye-slash"></i></span>
                     </div>
                 </div>

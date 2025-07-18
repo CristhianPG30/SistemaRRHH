@@ -195,6 +195,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && !(isset($_POST['action']) && $_POST[
     if (intval($cantidad_hijos_post) < 0) $errors[] = "La cantidad de hijos no puede ser un valor negativo.";
     if (intval($cantidad_hijos_post) > 25) $errors[] = "La cantidad de hijos para efectos de renta no puede ser mayor a 25.";
     if (empty($provincia_id_post) || empty($canton_id_post) || empty($distrito_id_post)) $errors[] = "Debe seleccionar la ubicación completa.";
+    
+    // --- CAMBIO (VALIDACIÓN PHP) ---
+    if (strlen($direccion_exacta_post) > 255) $errors[] = "La dirección exacta no puede exceder los 255 caracteres.";
+
     if ($salario_bruto_post < 0) $errors[] = "El salario bruto no puede ser un valor negativo.";
     if (!$is_edit_mode && empty($id_jefe_fk)) $errors[] = "Debe seleccionar un jefe para el nuevo colaborador.";
 
@@ -395,7 +399,11 @@ $conn->close();
                             <div class="col-md-4 mb-3"><label for="canton" class="form-label required">Cantón</label><select class="form-select" id="canton" name="canton" required></select></div>
                             <div class="col-md-4 mb-3"><label for="distrito" class="form-label required">Distrito</label><select class="form-select" id="distrito" name="distrito" required></select></div>
                         </div>
-                        <div class="mb-3"><label for="direccion_exacta" class="form-label required">Dirección Exacta</label><textarea class="form-control" name="direccion_exacta" rows="2" required><?= htmlspecialchars($direccion_exacta); ?></textarea></div>
+                        <div class="mb-3">
+                            <label for="direccion_exacta" class="form-label required">Dirección Exacta</label>
+                            <textarea class="form-control" id="direccion_exacta" name="direccion_exacta" rows="2" required maxlength="255"><?= htmlspecialchars($direccion_exacta); ?></textarea>
+                            <div id="charCounter" class="form-text text-end">0 / 255</div>
+                        </div>
                         <div class="d-flex justify-content-between mt-3">
                             <button type="button" class="btn btn-secondary" data-nav="prev"><i class="bi bi-arrow-left"></i> Anterior</button>
                             <button type="button" class="btn btn-primary" data-nav="next">Siguiente <i class="bi bi-arrow-right"></i></button>
@@ -645,6 +653,20 @@ $conn->close();
         const emailInput = document.querySelector('input[name="correo_electronico"]');
         emailInput.pattern = '[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,4}$';
         emailInput.title = 'Ingrese un correo electrónico válido.';
+
+        // --- CAMBIO (LÓGICA JAVASCRIPT PARA EL CONTADOR) ---
+        const direccionTextarea = document.getElementById('direccion_exacta');
+        const charCounter = document.getElementById('charCounter');
+        const maxLength = 255;
+
+        function updateCharCounter() {
+            const currentLength = direccionTextarea.value.length;
+            charCounter.textContent = `${currentLength} / ${maxLength}`;
+        }
+        
+        updateCharCounter(); // Llamada inicial para modo edición
+        direccionTextarea.addEventListener('input', updateCharCounter);
+
 
         const provinciaSelect = document.getElementById('provincia');
         const cantonSelect = document.getElementById('canton');

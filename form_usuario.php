@@ -112,6 +112,25 @@ $personas_sin_usuario = $conn->query("SELECT idPersona, CONCAT(Nombre, ' ', Apel
         .card { border: none; border-radius: 1rem; box-shadow: 0 0.5rem 1rem rgba(0,0,0,0.05); }
         .card-header { background-color: #4e73df; color: #ffffff; text-align: center; border-top-left-radius: 1rem; border-top-right-radius: 1rem; padding: 1.5rem; }
         .form-label.required::after { content: " *"; color: red; }
+        #password-strength {
+            font-size: 0.8rem;
+            margin-top: 5px;
+        }
+        .strength-meter {
+            height: 5px;
+            background: #ddd;
+            border-radius: 5px;
+            margin-top: 3px;
+        }
+        .strength-meter div {
+            height: 100%;
+            width: 0;
+            background: red;
+            border-radius: 5px;
+            transition: width 0.3s;
+        }
+        .invalid { color: red; }
+        .valid { color: green; }
     </style>
 </head>
 <body>
@@ -126,12 +145,23 @@ $personas_sin_usuario = $conn->query("SELECT idPersona, CONCAT(Nombre, ' ', Apel
                     unset($_SESSION['flash_message']);
                 }
                 ?>
-                <form method="POST" action="form_usuario.php<?= $is_edit_mode ? '?id=' . $usuario_a_editar['idUsuario'] : ''; ?>">
+                <form id="user-form" method="POST" action="form_usuario.php<?= $is_edit_mode ? '?id=' . $usuario_a_editar['idUsuario'] : ''; ?>">
                     <input type="hidden" name="csrf_token" value="<?= $_SESSION['csrf_token']; ?>">
                     <input type="hidden" name="idUsuario" value="<?= $usuario_a_editar['idUsuario']; ?>">
                     
                     <div class="mb-3"><label for="username" class="form-label required">Nombre de Usuario</label><div class="input-group"><span class="input-group-text"><i class="bi bi-person"></i></span><input type="text" class="form-control" name="username" value="<?= htmlspecialchars($usuario_a_editar['username']); ?>" required></div></div>
                     <div class="mb-3"><label for="password" class="form-label <?= !$is_edit_mode ? 'required' : ''; ?>"><?= $is_edit_mode ? 'Nueva Contraseña' : 'Contraseña'; ?></label><div class="input-group"><span class="input-group-text"><i class="bi bi-key"></i></span><input type="password" class="form-control" name="password" id="password" <?= !$is_edit_mode ? 'required' : ''; ?>><button class="btn btn-outline-secondary" type="button" id="togglePassword"><i class="bi bi-eye-slash"></i></button></div><small class="form-text text-muted"><?= $is_edit_mode ? 'Dejar en blanco para no cambiar.' : 'Establezca una contraseña segura.'; ?></small></div>
+                    <div id="password-strength" class="mb-3">
+                        <div class="strength-meter"><div id="strength-bar"></div></div>
+                        <p id="password-message" class="invalid">La contraseña debe tener al menos 8 caracteres.</p>
+                        <ul>
+                            <li id="length" class="invalid">Al menos 8 caracteres</li>
+                            <li id="uppercase" class="invalid">Una letra mayúscula</li>
+                            <li id="lowercase" class="invalid">Una letra minúscula</li>
+                            <li id="number" class="invalid">Un número</li>
+                            <li id="special" class="invalid">Un carácter especial (!@#$%&*)</li>
+                        </ul>
+                    </div>
                     <div class="mb-3"><label for="id_rol_fk" class="form-label required">Rol</label><select class="form-select" name="id_rol_fk" required><option value="">Seleccione un rol</option><?php mysqli_data_seek($roles, 0); while ($rol = $roles->fetch_assoc()): ?><option value="<?= $rol['idIdRol']; ?>" <?= ($usuario_a_editar['id_rol_fk'] == (int)$rol['idIdRol']) ? 'selected' : ''; ?>><?= htmlspecialchars($rol['descripcion']); ?></option><?php endwhile; ?></select></div>
                     <div class="mb-4"><label for="id_persona_fk" class="form-label required">Persona a Asociar</label><?php if ($is_edit_mode): ?><input type="text" class="form-control" value="<?= htmlspecialchars($usuario_a_editar['persona_nombre']); ?>" disabled readonly><input type="hidden" name="id_persona_fk" value="<?= $usuario_a_editar['id_persona_fk']; ?>"><small class="form-text text-muted">La persona asociada a un usuario no puede ser cambiada.</small><?php else: ?><select class="form-select" name="id_persona_fk" required><option value="">Seleccione una persona sin usuario</option><?php mysqli_data_seek($personas_sin_usuario, 0); while ($persona = $personas_sin_usuario->fetch_assoc()): ?><option value="<?= $persona['idPersona']; ?>"><?= htmlspecialchars($persona['nombre_completo']); ?></option><?php endwhile; ?></select><?php endif; ?></div>
                     <div class="d-flex justify-content-between"><a href="usuarios.php" class="btn btn-secondary"><i class="bi bi-x-circle me-1"></i>Cancelar</a><button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i><?= $is_edit_mode ? 'Actualizar Usuario' : 'Guardar Usuario'; ?></button></div>
@@ -140,13 +170,112 @@ $personas_sin_usuario = $conn->query("SELECT idPersona, CONCAT(Nombre, ' ', Apel
         </div>
     </div>
     <script>
-        document.getElementById('togglePassword').addEventListener('click', function (e) {
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('togglePassword').addEventListener('click', function (e) {
+                const password = document.getElementById('password');
+                const icon = this.querySelector('i');
+                const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
+                password.setAttribute('type', type);
+                icon.classList.toggle('bi-eye');
+                icon.classList.toggle('bi-eye-slash');
+            });
+
             const password = document.getElementById('password');
-            const icon = this.querySelector('i');
-            const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
-            password.setAttribute('type', type);
-            icon.classList.toggle('bi-eye');
-            icon.classList.toggle('bi-eye-slash');
+            const message = document.getElementById('password-message');
+            const strengthBar = document.getElementById('strength-bar');
+            const length = document.getElementById('length');
+            const uppercase = document.getElementById('uppercase');
+            const lowercase = document.getElementById('lowercase');
+            const number = document.getElementById('number');
+            const special = document.getElementById('special');
+
+            password.addEventListener('input', function() {
+                const val = password.value;
+                let strength = 0;
+
+                // Length
+                if (val.length >= 8) {
+                    length.classList.remove('invalid');
+                    length.classList.add('valid');
+                    strength++;
+                } else {
+                    length.classList.remove('valid');
+                    length.classList.add('invalid');
+                }
+
+                // Uppercase
+                if (val.match(/[A-Z]/)) {
+                    uppercase.classList.remove('invalid');
+                    uppercase.classList.add('valid');
+                    strength++;
+                } else {
+                    uppercase.classList.remove('valid');
+                    uppercase.classList.add('invalid');
+                }
+
+                // Lowercase
+                if (val.match(/[a-z]/)) {
+                    lowercase.classList.remove('invalid');
+                    lowercase.classList.add('valid');
+                    strength++;
+                } else {
+                    lowercase.classList.remove('valid');
+                    lowercase.classList.add('invalid');
+                }
+
+                // Number
+                if (val.match(/[0-9]/)) {
+                    number.classList.remove('invalid');
+                    number.classList.add('valid');
+                    strength++;
+                } else {
+                    number.classList.remove('valid');
+                    number.classList.add('invalid');
+                }
+
+                // Special character
+                if (val.match(/[!@#$%&*]/)) {
+                    special.classList.remove('invalid');
+                    special.classList.add('valid');
+                    strength++;
+                } else {
+                    special.classList.remove('valid');
+                    special.classList.add('invalid');
+                }
+                
+                // Strength bar
+                strengthBar.style.width = (strength * 20) + '%';
+                if (strength <= 2) {
+                    strengthBar.style.background = 'red';
+                } else if (strength <= 4) {
+                    strengthBar.style.background = 'orange';
+                } else {
+                    strengthBar.style.background = 'green';
+                }
+
+                // Message
+                if (val.length > 0 && strength < 5) {
+                    message.textContent = 'La contraseña no es segura.';
+                    message.classList.remove('valid');
+                    message.classList.add('invalid');
+                } else if (strength === 5) {
+                    message.textContent = 'La contraseña es segura.';
+                    message.classList.remove('invalid');
+                    message.classList.add('valid');
+                } else {
+                    message.textContent = 'La contraseña debe tener al menos 8 caracteres.';
+                    message.classList.remove('valid');
+                    message.classList.add('invalid');
+                }
+            });
+
+            document.getElementById('user-form').addEventListener('submit', function(e) {
+                const val = password.value;
+                if(val.length > 0 && (val.length < 8 || !val.match(/[A-Z]/) || !val.match(/[a-z]/) || !val.match(/[0-9]/) || !val.match(/[!@#$%&*]/))) {
+                    e.preventDefault();
+                    alert('La contraseña no cumple con los requisitos de seguridad.');
+                }
+            });
         });
     </script>
     <?php include 'footer.php'; ?>
