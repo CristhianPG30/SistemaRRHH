@@ -1,33 +1,13 @@
 {
-  "creditos_fiscales": {
-    "conyuge": 2600,
-    "hijo": 1720
-  },
-  "tramos": [
-    {
-      "salario_minimo": 0,
-      "porcentaje": 0,
-      "monto_fijo": 0
-    },
-    {
-      "salario_minimo": 922000,
-      "porcentaje": 10,
-      "monto_fijo": 0
-    },
-    {
-      "salario_minimo": 1352000,
-      "porcentaje": 15,
-      "monto_fijo": 43000
-    },
-    {
-      "salario_minimo": 2373000,
-      "porcentaje": 20,
-      "monto_fijo": 196150
-    },
-    {
-      "salario_minimo": 4745000,
-      "porcentaje": 25,
-      "monto_fijo": 670550
-    }
-  ]
+  "tramos_salariales_2025": [
+    { "min": 0,       "max": 922000,   "tasa": 0, "impuesto_sobre_exceso_de": 0 },
+    { "min": 922000,  "max": 1352000,  "tasa": 10, "impuesto_sobre_exceso_de": 0 },
+    { "min": 1352000, "max": 2373000,  "tasa": 15, "impuesto_sobre_exceso_de": 43000 },
+    { "min": 2373000, "max": 4745000,  "tasa": 20, "impuesto_sobre_exceso_de": 196150 },
+    { "min": 4745000, "max": null,     "tasa": 25, "impuesto_sobre_exceso_de": 670550 }
+  ],
+  "creditos_fiscales_2025": {
+    "hijo": 1720,
+    "conyuge": 2600
+  }
 }
