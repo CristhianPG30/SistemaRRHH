@@ -1,14 +1,54 @@
-<?php  
+<?php
 session_start();
 if (!isset($_SESSION['username']) || $_SESSION['rol'] != 2) { // Verificar que el usuario tiene rol de colaborador
     header('Location: login.php');
     exit;
 }
 
+// --- CORRECCIÓN: Añadir zona horaria para asegurar que la fecha actual sea la correcta ---
+date_default_timezone_set('America/Costa_Rica');
+
 include 'db.php'; // Conexión a la base de datos
 
 $username = $_SESSION['username'];
 $persona_id = $_SESSION['persona_id'];
+
+// --- FUNCIONES AUXILIARES ---
+function obtenerDiasFeriados($anio, $conn) {
+    $feriadosFilePath = 'js/feriados.json';
+    if (!file_exists($feriadosFilePath)) return [];
+    $feriados_data = json_decode(file_get_contents($feriadosFilePath), true);
+    return is_array($feriados_data) ? array_column($feriados_data, 'fecha') : [];
+}
+
+
+// --- LÓGICA DE FILTROS Y DATOS ---
+$fecha_inicio_str = $_GET['fecha_inicio'] ?? date('Y-m-01');
+$fecha_fin_str = $_GET['fecha_fin'] ?? date('Y-m-t');
+$fechaHoy = date('Y-m-d'); // Fecha actual para la comparación
+
+// Obtener todos los registros de asistencia del colaborador en el rango de una vez
+$sql_asistencia = "SELECT Fecha, Entrada, Salida FROM control_de_asistencia WHERE Persona_idPersona = ? AND Fecha BETWEEN ? AND ?";
+$stmt = $conn->prepare($sql_asistencia);
+$stmt->bind_param("iss", $persona_id, $fecha_inicio_str, $fecha_fin_str);
+$stmt->execute();
+$result_asistencia = $stmt->get_result();
+$asistencias = [];
+while ($row = $result_asistencia->fetch_assoc()) {
+    $asistencias[$row['Fecha']] = $row;
+}
+$stmt->close();
+$conn->close();
+
+// Obtener feriados para el año o años del rango
+$feriados = [];
+$anio_inicio = date('Y', strtotime($fecha_inicio_str));
+$anio_fin = date('Y', strtotime($fecha_fin_str));
+for ($a = $anio_inicio; $a <= $anio_fin; $a++) {
+    $feriados = array_merge($feriados, obtenerDiasFeriados($a, $conn));
+}
+$feriados = array_unique($feriados);
+
 ?>
 
 <!DOCTYPE html>
@@ -93,9 +133,9 @@ $persona_id = $_SESSION['persona_id'];
             text-align: center;
             vertical-align: middle;
         }
-        .badge-atiempo { background: #01b87f; color: #fff; font-size: 1em; }
-        .badge-tarde { background: #ffd237; color: #6a4d00; font-size: 1em; }
-        .badge-ausente { background: #ff6565; color: #fff; font-size: 1em; }
+        .badge-atiempo { background: #01b87f !important; color: #fff !important; font-size: 1em; }
+        .badge-tarde { background: #ffd237 !important; color: #6a4d00 !important; font-size: 1em; }
+        .badge-ausente { background: #ff6565 !important; color: #fff !important; font-size: 1em; }
         .no-data-row {
             color: #828ba7;
             background: #f3faff;
@@ -119,22 +159,20 @@ $persona_id = $_SESSION['persona_id'];
         </div>
         <p class="text-center mb-3">Consulta y filtra tu historial de asistencia aquí.</p>
 
-        <!-- Filtros de fecha -->
         <form method="GET" class="filter-box animate__animated animate__fadeInDown">
             <div>
                 <label for="fecha_inicio" class="form-label">Fecha de Inicio</label>
-                <input type="date" class="form-control" id="fecha_inicio" name="fecha_inicio" value="<?= isset($_GET['fecha_inicio']) ? $_GET['fecha_inicio'] : ''; ?>">
+                <input type="date" class="form-control" id="fecha_inicio" name="fecha_inicio" value="<?= htmlspecialchars($fecha_inicio_str); ?>">
             </div>
             <div>
                 <label for="fecha_fin" class="form-label">Fecha de Fin</label>
-                <input type="date" class="form-control" id="fecha_fin" name="fecha_fin" value="<?= isset($_GET['fecha_fin']) ? $_GET['fecha_fin'] : ''; ?>">
+                <input type="date" class="form-control" id="fecha_fin" name="fecha_fin" value="<?= htmlspecialchars($fecha_fin_str); ?>">
             </div>
             <div>
                 <button type="submit" class="btn btn-filtrar mt-3"><i class="bi bi-search"></i> Filtrar</button>
             </div>
         </form>
 
-        <!-- Tabla de asistencia -->
         <div class="table-responsive">
             <table class="table table-asistencia table-bordered mt-3 mb-0">
                 <thead>
@@ -147,60 +185,58 @@ $persona_id = $_SESSION['persona_id'];
                 </thead>
                 <tbody>
                     <?php
-                    $fecha_inicio = $_GET['fecha_inicio'] ?? '';
-                    $fecha_fin = $_GET['fecha_fin'] ?? '';
+                    $periodo = new DatePeriod(
+                        new DateTime($fecha_inicio_str),
+                        new DateInterval('P1D'),
+                        new DateTime($fecha_fin_str . ' +1 day')
+                    );
 
-                    // Construir la consulta de asistencia con los filtros de fecha
-                    $sql_asistencia = "SELECT Fecha, Entrada, Salida, 
-                                        CASE 
-                                            WHEN Entrada <= '08:00:00' THEN 'A tiempo' 
-                                            WHEN Entrada > '08:00:00' THEN 'Tarde' 
-                                            ELSE 'Ausente' 
-                                        END AS Estado 
-                                        FROM control_de_asistencia 
-                                        WHERE Persona_idPersona = ?";
-                    $params = [$persona_id];
-                    $types = "i";
-                    if ($fecha_inicio && $fecha_fin) {
-                        $sql_asistencia .= " AND Fecha BETWEEN ? AND ?";
-                        $params[] = $fecha_inicio;
-                        $params[] = $fecha_fin;
-                        $types .= "ss";
-                    } elseif ($fecha_inicio) {
-                        $sql_asistencia .= " AND Fecha >= ?";
-                        $params[] = $fecha_inicio;
-                        $types .= "s";
-                    } elseif ($fecha_fin) {
-                        $sql_asistencia .= " AND Fecha <= ?";
-                        $params[] = $fecha_fin;
-                        $types .= "s";
-                    }
-                    $sql_asistencia .= " ORDER BY Fecha DESC";
-                    $stmt = $conn->prepare($sql_asistencia);
-                    $stmt->bind_param($types, ...$params);
-                    $stmt->execute();
-                    $result_asistencia = $stmt->get_result();
+                    $registros_mostrados = 0;
+                    foreach (array_reverse(iterator_to_array($periodo)) as $fecha_obj) {
+                        $fecha_actual = $fecha_obj->format('Y-m-d');
+                        $dia_semana = date('N', strtotime($fecha_actual));
 
-                    if ($result_asistencia->num_rows > 0) {
-                        while ($row = $result_asistencia->fetch_assoc()) {
-                            // Badge de estado
-                            $estado = strtolower($row['Estado']);
-                            $badge = 'badge-atiempo';
-                            if ($estado == 'tarde') $badge = 'badge-tarde';
-                            elseif ($estado == 'ausente') $badge = 'badge-ausente';
-                            echo "<tr>";
-                            echo "<td>" . date('d/m/Y', strtotime($row['Fecha'])) . "</td>";
-                            echo "<td>" . ($row['Entrada'] ? htmlspecialchars($row['Entrada']) : '-') . "</td>";
-                            echo "<td>" . ($row['Salida'] ? htmlspecialchars($row['Salida']) : '-') . "</td>";
-                            echo "<td><span class='badge $badge'>" . htmlspecialchars($row['Estado']) . "</span></td>";
-                            echo "</tr>";
+                        // Omitir fechas futuras (posteriores a hoy)
+                        if ($fecha_actual > $fechaHoy) {
+                            continue;
                         }
-                    } else {
-                        echo "<tr><td colspan='4' class='no-data-row'>No se encontraron registros de asistencia.</td></tr>";
+
+                        // Omitir fines de semana y feriados
+                        if ($dia_semana >= 6 || in_array($fecha_actual, $feriados)) {
+                            continue;
+                        }
+
+                        $registros_mostrados++;
+                        $estado = 'Ausente';
+                        $badge = 'badge-ausente';
+                        $entrada = '-';
+                        $salida = '-';
+
+                        if (isset($asistencias[$fecha_actual])) {
+                            $registro_dia = $asistencias[$fecha_actual];
+                            $entrada = htmlspecialchars($registro_dia['Entrada']);
+                            $salida = htmlspecialchars($registro_dia['Salida'] ?? '-');
+                            
+                            if ($registro_dia['Entrada'] > '08:00:00') {
+                                $estado = 'Tarde';
+                                $badge = 'badge-tarde';
+                            } else {
+                                $estado = 'A tiempo';
+                                $badge = 'badge-atiempo';
+                            }
+                        }
+
+                        echo "<tr>";
+                        echo "<td>" . date('d/m/Y', strtotime($fecha_actual)) . "</td>";
+                        echo "<td>" . $entrada . "</td>";
+                        echo "<td>" . $salida . "</td>";
+                        echo "<td><span class='badge $badge'>" . htmlspecialchars($estado) . "</span></td>";
+                        echo "</tr>";
                     }
 
-                    $stmt->close();
-                    $conn->close();
+                    if ($registros_mostrados === 0) {
+                        echo "<tr><td colspan='4' class='no-data-row'>No hay días laborables para mostrar en el rango seleccionado.</td></tr>";
+                    }
                     ?>
                 </tbody>
             </table>

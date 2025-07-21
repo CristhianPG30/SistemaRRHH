@@ -34,44 +34,63 @@ function calcularDiasLaborales($anio, $mes) {
 }
 
 function calcularDeduccionesDeLey($salario_bruto, $conn) {
-    $deducciones = ['total' => 0, 'detalles' => []];
+    $deducciones = ['total' => 0, 'monto_ccss' => 0, 'detalles' => []];
     $result = $conn->query("SELECT idTipoDeduccion, Descripcion FROM tipo_deduccion_cat");
     if ($result) {
         while ($row = $result->fetch_assoc()) {
             @list($nombre, $porcentaje) = explode(':', $row['Descripcion']);
+            $nombre_limpio = trim($nombre);
+            $porcentaje_float = floatval(trim($porcentaje));
+            
             if (is_numeric(trim($porcentaje))) {
-                $monto = $salario_bruto * (floatval(trim($porcentaje)) / 100);
+                $monto = $salario_bruto * ($porcentaje_float / 100);
                 $deducciones['total'] += $monto;
-                $deducciones['detalles'][] = ['id' => $row['idTipoDeduccion'], 'descripcion' => trim($nombre), 'monto' => $monto, 'porcentaje' => floatval(trim($porcentaje))];
+                
+                if (stripos($nombre_limpio, 'CCSS') !== false) {
+                    $deducciones['monto_ccss'] = $monto;
+                }
+
+                $deducciones['detalles'][] = ['id' => $row['idTipoDeduccion'], 'descripcion' => $nombre_limpio, 'monto' => $monto, 'porcentaje' => $porcentaje_float];
             }
         }
     }
     return $deducciones;
 }
 
-function calcularImpuestoRenta($salario_imponible, $cantidad_hijos) {
+function calcularImpuestoRenta($salario_imponible, $cantidad_hijos, $es_casado) {
     $tax_config_path = __DIR__ . "/js/tramos_impuesto_renta.json";
     if (!file_exists($tax_config_path)) return 0;
+    
     $config_data = json_decode(file_get_contents($tax_config_path), true);
-    $tax_brackets = $config_data['tramos'] ?? [];
-    $credito_por_hijo = $config_data['creditos_fiscales']['hijo'] ?? 0;
+    // Utiliza la configuración para el año 2025, ya que es la que se proporciona en el archivo JSON.
+    $tax_brackets = $config_data['tramos_salariales_2025'] ?? [];
+    $creditos_fiscales = $config_data['creditos_fiscales_2025'] ?? ['hijo' => 0, 'conyuge' => 0];
+    $credito_por_hijo = $creditos_fiscales['hijo'] ?? 0;
+    $credito_conyuge = $creditos_fiscales['conyuge'] ?? 0;
+
     $impuesto_calculado = 0;
+
+    // Itera hacia atrás para encontrar el tramo más alto aplicable primero.
     for ($i = count($tax_brackets) - 1; $i >= 0; $i--) {
         $tramo = $tax_brackets[$i];
-        if ($salario_imponible > $tramo['salario_minimo']) {
-            $excedente = $salario_imponible - $tramo['salario_minimo'];
-            $impuesto_calculado = ($tramo['monto_fijo'] ?? 0) + ($excedente * ($tramo['porcentaje'] / 100));
+        if ($salario_imponible > $tramo['min']) {
+            $excedente = $salario_imponible - $tramo['min'];
+            $impuesto_calculado = ($excedente * ($tramo['tasa'] / 100)) + $tramo['impuesto_sobre_exceso_de'];
             break;
         }
     }
+    
     $credito_total_hijos = $cantidad_hijos * $credito_por_hijo;
-    $impuesto_final = $impuesto_calculado - $credito_total_hijos;
+    $credito_total_conyuge = $es_casado ? $credito_conyuge : 0;
+    
+    $impuesto_final = $impuesto_calculado - $credito_total_hijos - $credito_total_conyuge;
+    
     return max(0, $impuesto_final);
 }
 
 function obtenerPlanillaDetallada($anio, $mes, $conn) {
     $dias_laborales_del_mes = calcularDiasLaborales($anio, $mes);
-    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.cantidad_hijos, c.idColaborador, c.salario_bruto as salario_base 
+    $sql_colaboradores = "SELECT p.idPersona, p.Nombre, p.Apellido1, p.cantidad_hijos, p.id_estado_civil_fk, c.idColaborador, c.salario_bruto as salario_base 
         FROM colaborador c 
         JOIN persona p ON c.id_persona_fk = p.idPersona 
         WHERE c.activo = 1 AND c.idColaborador NOT IN (SELECT id_colaborador_fk FROM liquidaciones)";
@@ -150,17 +169,11 @@ function obtenerPlanillaDetallada($anio, $mes, $conn) {
         $salario_bruto_calculado = $pago_ordinario + $pago_horas_extra;
 
         $deducciones_ley = calcularDeduccionesDeLey($salario_bruto_calculado, $conn);
-        $ccss_deduction_amount = 0;
-        foreach($deducciones_ley['detalles'] as $ded) {
-            if (stripos($ded['descripcion'], 'CCSS') !== false) {
-                $ccss_deduction_amount = $ded['monto'];
-                break;
-            }
-        }
-        $salario_imponible_renta = $salario_bruto_calculado - $ccss_deduction_amount;
-        $impuesto_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos']);
+        $salario_imponible_renta = $salario_bruto_calculado - $deducciones_ley['monto_ccss'];
+        $es_casado = ($colaborador['id_estado_civil_fk'] == 2);
+        $impuesto_renta = calcularImpuestoRenta($salario_imponible_renta, $colaborador['cantidad_hijos'], $es_casado);
 
-        $deducciones_ley['detalles'][] = ['id' => 99, 'descripcion' => 'Impuesto sobre la Renta', 'monto' => $impuesto_renta];
+        $deducciones_ley['detalles'][] = ['id' => 99, 'descripcion' => 'Impuesto sobre la Renta', 'monto' => $impuesto_renta, 'porcentaje' => 'N/A'];
         $total_deducciones_final = $deducciones_ley['total'] + $impuesto_renta;
         $salario_neto = $salario_bruto_calculado - $total_deducciones_final;
 

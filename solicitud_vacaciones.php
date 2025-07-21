@@ -61,8 +61,8 @@ $dias_acumulados = floor($meses_laborados * 1); // 1 día por mes
 
 $dias_tomados = 0;
 if ($idColaborador > 0) {
-    // --- CORRECCIÓN: Usar dias_habiles para el cálculo ---
-    $sql_tomados = "SELECT SUM(dias_habiles) as total
+    // --- CORRECCIÓN: Calcular días tomados iterando sobre los registros ---
+    $sql_tomados = "SELECT fecha_inicio, fecha_fin
     FROM permisos 
     WHERE id_colaborador_fk = ? 
       AND id_tipo_permiso_fk = (SELECT idTipoPermiso FROM tipo_permiso_cat WHERE LOWER(Descripcion) = 'vacaciones')
@@ -70,10 +70,11 @@ if ($idColaborador > 0) {
     $stmt_tomados = $conn->prepare($sql_tomados);
     $stmt_tomados->bind_param("i", $idColaborador);
     $stmt_tomados->execute();
-    $stmt_tomados->bind_result($dias_tomados_db);
-    $stmt_tomados->fetch();
+    $result_tomados = $stmt_tomados->get_result();
+    while($vacacion = $result_tomados->fetch_assoc()){
+        $dias_tomados += calcularDiasLaboralesSolicitados($vacacion['fecha_inicio'], $vacacion['fecha_fin']);
+    }
     $stmt_tomados->close();
-    $dias_tomados = $dias_tomados_db ?: 0;
 }
 
 $dias_disponibles = max($dias_acumulados - $dias_tomados, 0);
@@ -108,7 +109,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
         $mensaje_tipo = 'danger';
     } elseif ($idColaborador > 0) {
         
-        // --- INICIO DE LA CORRECCIÓN: Consulta de cruce de fechas mejorada ---
         $check_sql = "SELECT tpc.Descripcion AS tipo_permiso 
                       FROM permisos p
                       JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
@@ -123,15 +123,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
         if ($result_check->num_rows > 0) {
             $conflicto = $result_check->fetch_assoc();
             $tipo_conflicto = strtolower($conflicto['tipo_permiso']);
-            // Se crea un mensaje específico y se usa la variable correcta ($mensaje_tipo)
             $mensaje = "Ya tienes una solicitud de '{$tipo_conflicto}' que se cruza con estas fechas.";
             $mensaje_tipo = 'danger';
         } else {
-            // Si no hay conflictos, se procede a insertar una nueva solicitud
-            $stmt_insert = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo, dias_habiles) VALUES (?, ?, ?, NOW(), ?, ?, ?, ?)");
-            $stmt_insert->bind_param("iiisssi", $idColaborador, $idTipoPermiso, $idEstadoPendiente, $fecha_inicio, $fecha_fin, $motivo, $dias_solicitados_laborales);
+            // Guardar el permiso. No se guarda 'dias_habiles' ya que no existe en la BD.
+            $stmt_insert = $conn->prepare("INSERT INTO permisos (id_colaborador_fk, id_tipo_permiso_fk, id_estado_fk, fecha_solicitud, fecha_inicio, fecha_fin, motivo) VALUES (?, ?, ?, NOW(), ?, ?, ?)");
+            $stmt_insert->bind_param("iiisss", $idColaborador, $idTipoPermiso, $idEstadoPendiente, $fecha_inicio, $fecha_fin, $motivo);
             if ($stmt_insert->execute()) {
-                // Se usa una sesión para mostrar el mensaje después de redirigir
                 $_SESSION['flash_message'] = ['tipo' => 'success', 'mensaje' => '¡Solicitud de vacaciones enviada correctamente!'];
                 header("Location: " . $_SERVER['PHP_SELF']);
                 exit();
@@ -142,11 +140,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['solicitar'])) {
             $stmt_insert->close();
         }
         $check_stmt->close();
-        // --- FIN DE LA CORRECCIÓN ---
     }
 }
 
-// Manejo de mensajes flash para mostrar después de una redirección
 if(isset($_SESSION['flash_message'])){
     $mensaje = $_SESSION['flash_message']['mensaje'];
     $mensaje_tipo = $_SESSION['flash_message']['tipo'];
@@ -155,9 +151,9 @@ if(isset($_SESSION['flash_message'])){
 
 $solicitudes = [];
 if ($idColaborador > 0) {
-    // --- CORRECCIÓN: Usar dias_habiles para el historial ---
+    // --- CORRECCIÓN: No seleccionar 'dias_habiles' del historial ---
     $stmt_historial = $conn->prepare("
-    SELECT p.fecha_inicio, p.fecha_fin, p.dias_habiles as dias_solicitados, ec.Descripcion AS estado, p.observaciones, p.motivo
+    SELECT p.fecha_inicio, p.fecha_fin, ec.Descripcion AS estado, p.observaciones, p.motivo
     FROM permisos p
     JOIN tipo_permiso_cat tpc ON p.id_tipo_permiso_fk = tpc.idTipoPermiso
     JOIN estado_cat ec ON p.id_estado_fk = ec.idEstado
@@ -307,7 +303,7 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
                         <tr>
                             <td><?= date('d/m/Y', strtotime($sol['fecha_inicio'])) ?></td>
                             <td><?= date('d/m/Y', strtotime($sol['fecha_fin'])) ?></td>
-                            <td><?= htmlspecialchars($sol['dias_solicitados']) ?></td>
+                            <td><?= htmlspecialchars(calcularDiasLaboralesSolicitados($sol['fecha_inicio'], $sol['fecha_fin'])) ?></td>
                             <td>
                                 <?php
                                 $estado_lower = strtolower($sol['estado']);
@@ -329,7 +325,6 @@ $feriados_para_js = file_exists('js/feriados.json') ? json_decode(file_get_conte
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // El resto del JavaScript no necesita cambios
         const fechaInicioInput = document.getElementById('fecha_inicio');
         const fechaFinInput = document.getElementById('fecha_fin');
         
