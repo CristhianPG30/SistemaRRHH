@@ -7,7 +7,6 @@ function sanitize_input($data) {
     return htmlspecialchars(stripslashes(trim($data)));
 }
 
-// Si se recibe un error por GET (desde la redirección), se muestra.
 if (isset($_GET['error'])) {
     $errorMessage = sanitize_input($_GET['error']);
 }
@@ -23,15 +22,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     } elseif (strlen($password) > 24) {
         $errorMessage = "La contraseña no puede tener más de 24 caracteres.";
     } else {
-        // --- INICIO DE LA CORRECCIÓN: Consulta SQL modificada ---
         $sql = "SELECT 
                     u.idUsuario, u.username, u.password, u.id_rol_fk, u.id_persona_fk, 
                     c.idColaborador, c.activo, c.fecha_ingreso 
                 FROM usuario u 
                 LEFT JOIN colaborador c ON u.id_persona_fk = c.id_persona_fk 
                 WHERE BINARY u.username = ?";
-        // --- FIN DE LA CORRECCIÓN ---
-
         $stmt = $conn->prepare($sql);
         if ($stmt) {
             $stmt->bind_param("s", $username);
@@ -41,33 +37,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $user = $result->fetch_assoc();
 
                 if (password_verify($password, $user['password'])) {
-                    
-                    // --- INICIO DE LA CORRECCIÓN: Lógica de validación de estado y fecha ---
-                    
-                    // Condición 1: El usuario es un colaborador (tiene registro en la tabla `colaborador`)
                     if (isset($user['activo'])) {
-                        // 1.1 Verificar si la cuenta está desactivada
                         if ($user['activo'] == 0) {
                             $errorMessage = "Tu cuenta ha sido desactivada.";
                         }
-                        // 1.2 Verificar si la fecha de ingreso es futura
                         elseif ($user['fecha_ingreso'] && new DateTime($user['fecha_ingreso']) > new DateTime()) {
                             $fecha_formateada = date('d/m/Y', strtotime($user['fecha_ingreso']));
                             $errorMessage = "Tu cuenta estará activa a partir del " . $fecha_formateada . ".";
                         }
                     }
-                    // Si no es un colaborador (ej. admin puro sin registro en `colaborador`) o si pasa las validaciones, puede continuar.
-                    // --- FIN DE LA CORRECCIÓN ---
-
-                    // Si después de las validaciones no hay mensaje de error, procede a iniciar sesión
                     if (empty($errorMessage)) {
                         session_regenerate_id(true);
                         $_SESSION['username'] = $user['username'];
                         $_SESSION['rol'] = (int)$user['id_rol_fk'];
                         $_SESSION['persona_id'] = $user['id_persona_fk'];
                         if (!empty($user['idColaborador'])) $_SESSION['colaborador_id'] = $user['idColaborador'];
-                        
-                        // Redirección según el rol
                         switch ($_SESSION['rol']) {
                             case 1: header("Location: index_administrador.php"); break;
                             case 2: header("Location: index_colaborador.php"); break;
@@ -77,8 +61,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         }
                         exit();
                     }
-                    // Si hay un errorMessage, el script continuará y lo mostrará en el formulario.
-
                 } else {
                     $errorMessage = "Usuario o contraseña incorrectos.";
                 }
@@ -116,21 +98,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             justify-content: center;
             align-items: center;
             min-height: 100vh;
-            background-color: #f4f7fc;
+            background: url('img/Background.png') no-repeat center center fixed;
+            background-size: cover;
             overflow: hidden;
             position: relative;
         }
         body::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-image: url('data:image/svg+xml;utf8,<svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="%23cde4f9" /><stop offset="100%" stop-color="%23f4f7fc" /></linearGradient></defs><rect fill="url(%23g)" width="100%" height="100%"/><path d="M0,50 C250,150 350,0 600,100 L600,00 L0,0 Z" fill-opacity="0.1" fill="%235e72e4"></path><path d="M1200,600 C1000,500 1100,700 800,600 L1200,600 L1200,0 Z" fill-opacity="0.1" fill="%232dce89"></path></svg>');
-            background-size: cover;
-            background-position: center;
-            z-index: -1;
+            content: none !important;
         }
         .login-wrapper {
             display: grid;
